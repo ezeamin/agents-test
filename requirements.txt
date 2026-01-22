@@ -10,6 +10,7 @@ pipecat-ai[groq]
 pipecat-ai[daily]
 pipecat-ai[runner]
 pipecat-ai[webrtc]
+pipecat-ai[tracing]
 fastapi
 websockets
 faster-whisper

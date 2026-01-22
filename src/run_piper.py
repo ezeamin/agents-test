@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 
 def main():
     # ─────────────────────────────────────────────
-    # Cargar .env desde la carpeta padre
+    # Cargar .env desde la carpeta raíz
     # ─────────────────────────────────────────────
     BASE_DIR = Path(__file__).resolve().parent.parent
-    load_dotenv(".env")
+    load_dotenv(BASE_DIR / ".env")
 
     voice_model = os.getenv("CURRENT_VOICE")
     voice_config = os.getenv("CURRENT_VOICE_CONFIG")
@@ -20,8 +20,8 @@ def main():
             "Faltan variables en el .env: CURRENT_VOICE y/o CURRENT_VOICE_CONFIG"
         )
 
-    voice_model = "voice/" + voice_model
-    voice_config = "voice/" + voice_config
+    voice_model = BASE_DIR / "voice" / voice_model
+    voice_config = BASE_DIR / "voice" / voice_config
 
     print("Usando modelo de voz:", voice_model)
     print("Usando config de voz:", voice_config)
