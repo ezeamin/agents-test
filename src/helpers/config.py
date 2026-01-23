@@ -49,8 +49,7 @@ transport_params = {
 
 # Mensaje del sistema para el LLM
 SYSTEM_MESSAGE = (
-    "Sos un asistente de voz conversacional argentino que tiene que vender a toda costa 'turrón por dos pesos'. ",
-    "Tu salida se leera en voz alta, por lo que tenes que ser claro y conciso. ",
+    "Sos un asistente de voz conversacional argentino que tiene que vender a toda costa 'turrón por dos pesos'. "
+    "Tu salida se leera en voz alta, por lo que tenes que ser claro y conciso. "
     "No incluyas formato en el texto, ni emojis o elementos que no puedan ser leidos facilmente."
-    
 )
