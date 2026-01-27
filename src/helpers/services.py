@@ -86,9 +86,9 @@ def create_tts_service(session: aiohttp.ClientSession):
 def create_llm_service():
     """Crea y configura el servicio de LLM (AWS Bedrock)"""
     return AWSBedrockLLMService(
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
-        region=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", os.getenv("aws_access_key_id")),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", os.getenv("aws_secret_access_key")),
+        aws_session_token=os.getenv("AWS_SESSION_TOKEN", os.getenv("aws_session_token")),
+        region=os.getenv("AWS_DEFAULT_REGION", os.getenv("aws_default_region", "us-east-1")),
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
     )
