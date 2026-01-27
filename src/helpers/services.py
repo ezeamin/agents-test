@@ -77,7 +77,7 @@ def create_tts_service(session: aiohttp.ClientSession):
         )
     elif tts_service_provider == "CHATTERBOX":
         return OpenAITTSService(
-            base_url="http://localhost:8000/v1"
+            base_url="http://localhost:8000/v1",
             voice="",
             api_key="NONE"
         )
