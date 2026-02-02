@@ -81,6 +81,26 @@ uv run python src/agent.py
 
 El agente estará listo para recibir conexiones y procesar audio/texto en tiempo real.
 
+### Diagnóstico Bedrock (UnrecognizedClientException)
+
+Si ves "The security token included in the request is invalid" y las credenciales son correctas:
+
+1. **Reproducir la llamada a Bedrock** (mismas credenciales que el agente) y ver la respuesta completa de AWS:
+
+   ```bash
+   uv run python scripts/check_bedrock.py
+   ```
+
+   El script prueba STS y Bedrock ConverseStream; si falla, muestra **Code**, **Message** y **RequestId** para depurar o contactar soporte AWS.
+
+2. **Probar modelo base en región** (sin perfil cross-region `us.anthropic`). En `.env` añade:
+
+   ```env
+   BEDROCK_MODEL_ID=anthropic.claude-haiku-4-5-20251001-v1:0
+   ```
+
+   Si así funciona, el fallo puede ser del perfil de inferencia (permisos/SCP en otras regiones).
+
 ## Notas
 
 - Asegúrate de que el servidor de Piper esté corriendo antes de iniciar el agente.

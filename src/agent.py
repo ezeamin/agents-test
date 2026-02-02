@@ -1,4 +1,10 @@
 """Agente de voz con pipeline STT → LLM → TTS"""
+# Cargar .env antes de cualquier otro import para que AWS_* estén disponibles
+# cuando Pipecat/aiobotocore resuelvan credenciales (incluso en contexto async).
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+
 import aiohttp
 
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
