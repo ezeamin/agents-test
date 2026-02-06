@@ -27,22 +27,33 @@ except ImportError:
 # Servidores ICE (STUN/TURN) para WebRTC en producción
 ICE_SERVERS = os.getenv("ICE_SERVERS", "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302").split(",")
 
+# VAD más conservador para evitar que eco o ruido corten el TTS del agente.
+# Si el altavoz reproduce la voz del bot, el mic puede detectarla y disparar
+# "user started speaking" → InterruptionTaskFrame → se descarta el audio y no se oye.
+# Usar auriculares evita el eco. start_secs/confidence/min_volume más altos reducen falsos positivos.
+VAD_PARAMS = VADParams(
+    confidence=0.8,
+    start_secs=0.5,
+    stop_secs=0.3,
+    min_volume=0.7,
+)
+
 # Configuración de transports
 transport_params = {
     "daily": lambda: DailyParams(
         audio_in_enabled=True,
         audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+        vad_analyzer=SileroVADAnalyzer(params=VAD_PARAMS),
     ),
     "twilio": lambda: FastAPIWebsocketParams(
         audio_in_enabled=True,
         audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+        vad_analyzer=SileroVADAnalyzer(params=VAD_PARAMS),
     ),
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True,
         audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+        vad_analyzer=SileroVADAnalyzer(params=VAD_PARAMS),
         ice_servers=ICE_SERVERS,
         # ice_servers=[{"urls": ["stun:stun.l.google.com:19302"]}]
     ),
