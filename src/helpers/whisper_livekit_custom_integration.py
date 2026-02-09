@@ -1,43 +1,110 @@
-from typing import AsyncGenerator, Optional
+import asyncio
+import json
+import websockets
+from typing import AsyncGenerator
+
 from pipecat.services.stt_service import STTService
 from pipecat.frames.frames import (
-    Frame, TranscriptionFrame, InterimTranscriptionFrame,
-    StartFrame, EndFrame, CancelFrame
+    Frame,
+    TranscriptionFrame,
+    InterimTranscriptionFrame,
+    StartFrame,
+    EndFrame,
+    CancelFrame,
 )
 from pipecat.utils.time import time_now_iso8601
-import websockets
-import numpy as np
+
 
 class WhisperLiveKitSTT(STTService):
     def __init__(self, url: str, sample_rate: int = 16000, **kwargs):
         super().__init__(sample_rate=sample_rate, **kwargs)
-        self._url = url
-        self._websocket = None
+        self.url = url
+        self.ws = None
+        self.recv_task = None
+        self.closed = False
+
+    # ---------- lifecycle ----------
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
-        self._websocket = await websockets.connect(self._url, max_size=None)
+        self.ws = await websockets.connect(self.url, max_size=None)
+        self.closed = False
+        self.recv_task = asyncio.create_task(self._recv_loop())
+        self.logger.info("WhisperLiveKit STT connected")
 
     async def stop(self, frame: EndFrame):
         await super().stop(frame)
-        if self._websocket:
-            await self._websocket.close()
+        await self._flush()
+        await self._close()
 
     async def cancel(self, frame: CancelFrame):
         await super().cancel(frame)
-        if self._websocket:
-            await self._websocket.close()
+        await self._close()
+
+    async def _close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.recv_task:
+            self.recv_task.cancel()
+        if self.ws:
+            await self.ws.close()
+            self.ws = None
+        self.logger.info("WhisperLiveKit STT closed")
+
+    async def _flush(self):
+        if self.ws:
+            # empty frame = end of speech
+            await self.ws.send(b"")
+
+    # ---------- receive side ----------
+
+    async def _recv_loop(self):
+        try:
+            async for msg in self.ws:
+                data = json.loads(msg)
+
+                # WhisperLiveKit schema
+                interim = data.get("buffer_transcription", "")
+                lines = data.get("lines", [])
+
+                if interim:
+                    await self.push_frame(
+                        InterimTranscriptionFrame(
+                            text=interim,
+                            user_id="",
+                            timestamp=time_now_iso8601(),
+                        )
+                    )
+
+                if lines:
+                    final = " ".join(
+                        l.get("text", "") for l in lines if l.get("text")
+                    ).strip()
+                    if final:
+                        await self.push_frame(
+                            TranscriptionFrame(
+                                text=final,
+                                user_id="",
+                                timestamp=time_now_iso8601(),
+                            )
+                        )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self.logger.error(f"WhisperLiveKit recv loop error: {e}")
+
+    # ---------- send side ----------
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
-        if self._websocket:
-            # Send audio (convert to int16 PCM if needed)
-            await self._websocket.send(audio)
+        if not self.ws:
+            return
 
-            # Receive transcription
-            msg = await self._websocket.recv()
-            if msg:
-                yield TranscriptionFrame(
-                    text=msg,
-                    user_id="",
-                    timestamp=time_now_iso8601()
-                )
+        # send audio in 100ms chunks
+        chunk_size = int(self.sample_rate * 0.1) * 2  # s16le
+        for i in range(0, len(audio), chunk_size):
+            await self.ws.send(audio[i : i + chunk_size])
+            await asyncio.sleep(0)
+
+        # Deepgram style: transcripts arrive via recv loop
+        yield None
