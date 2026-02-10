@@ -36,6 +36,7 @@ class ChatterboxServerTTS(TTSService):
         aiohttp_session: aiohttp.ClientSession,
         base_url: str,
         voice: str = "Elena.wav",
+        is_voice_cloned: bool = False,
         language: str = "es",
         temperature: float = 0.8,
         exaggeration: float = 1.3,
@@ -55,15 +56,23 @@ class ChatterboxServerTTS(TTSService):
         self._speed_factor = speed_factor
         self._seed = seed
         self.set_voice(voice)
+        # TODO: there is a GET endpoint in base_url/get_predefined_voices
+        # that returns a list of predefined voices:
+        # [{"display_name": "Elena", "filename": "Elena.wav"}]
+        # we can check that list and set _is_voice_cloned to False is the voice in the list
+        # or directly set a self._voice_mode directly
+        self._is_voice_cloned = is_voice_cloned
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
         voice = self._voice_id
         if not voice.lower().endswith(".wav"):
             voice = f"{voice}.wav"
 
+        voice_mode = "clone" if self._is_voice_cloned else "predefined"
+
         payload = {
             "text": text,
-            "voice_mode": "predefined",
+            "voice_mode": voice_mode,
             "predefined_voice_id": voice,
             "output_format": "wav",
             "language": self._language,
