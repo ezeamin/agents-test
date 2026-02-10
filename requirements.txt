@@ -1,5 +1,5 @@
 pipecat-ai[daily,runner,webrtc,tracing]
-pipecat-ai[aws,deepgram]
+pipecat-ai[aws,deepgram,whisper,elevenlabs]
 pipecat-ai[local-smart-turn-v3]
 aiohttp
 python-dotenv

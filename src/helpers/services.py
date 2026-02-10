@@ -3,10 +3,12 @@ import os
 import aiohttp
 
 from deepgram import LiveOptions
+from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.aws.llm import AWSBedrockLLMService
 from pipecat.services.aws.tts import PollyTTSService
 from pipecat.services.piper.tts import PiperTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 
 from helpers.whisper_livekit_custom_integration import WhisperLiveKitSTT
 from helpers.chatterbox_custom_integration import ChatterboxServerTTS, ChatterboxServerTTSOpenAI
@@ -14,8 +16,15 @@ from helpers.chatterbox_custom_integration import ChatterboxServerTTS, Chatterbo
 
 def create_stt_service():
     """Crea y configura el servicio de Speech-to-Text"""
-    stt_service_provider = os.getenv("STT_SERVICE_PROVIDER", "WHISPER-STREAM")
-    if stt_service_provider == "WHISPER-STREAM":
+    stt_service_provider = os.getenv("STT_SERVICE_PROVIDER", "WHISPER_STREAM")
+    if stt_service_provider == "WHISPER":
+        return WhisperSTTService(
+            model="medium",
+            device="cpu",
+            compute_type="int8", 
+            language="es",
+        )
+    elif stt_service_provider == "WHISPER_STREAM":
         ec2_host = os.getenv('EC2_HOST_WHISPER_STREAM', os.getenv('EC2_HOST'))
         if not ec2_host:
             raise ValueError("Must set EC2_HOST or EC2_HOST_WHISPER_STREAM")
@@ -73,6 +82,10 @@ def create_tts_service(session: aiohttp.ClientSession):
             voice="Lupe",
             speech_engine="generative",
             language="es-US"
+        )
+    elif tts_service_provider == "ELEVENLABS":
+        return ElevenLabsTTSService(
+            api_key=os.getenv("ELEVENLABS_API_KEY")
         )
     else:
         raise ValueError(f"Unknown TTS_SERVICE_PROVIDER: {tts_service_provider}")

@@ -31,7 +31,6 @@ class WhisperLiveKitSTT(STTService):
         self.ws = await websockets.connect(self.url, max_size=None)
         self.closed = False
         self.recv_task = asyncio.create_task(self._recv_loop())
-        self.logger.info("WhisperLiveKit STT connected")
 
     async def stop(self, frame: EndFrame):
         await super().stop(frame)
@@ -51,7 +50,6 @@ class WhisperLiveKitSTT(STTService):
         if self.ws:
             await self.ws.close()
             self.ws = None
-        self.logger.info("WhisperLiveKit STT closed")
 
     async def _flush(self):
         if self.ws:
@@ -105,7 +103,7 @@ class WhisperLiveKitSTT(STTService):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            self.logger.error(f"WhisperLiveKit recv loop error: {e}")
+            print(f"WhisperLiveKit recv loop error: {e}")
 
     # ---------- send side ----------
 
