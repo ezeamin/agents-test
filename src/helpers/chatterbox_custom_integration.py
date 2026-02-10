@@ -17,6 +17,7 @@ from loguru import logger
 from pipecat.frames.frames import (
     ErrorFrame,
     Frame,
+    StartFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
 )
@@ -36,13 +37,13 @@ class ChatterboxServerTTS(TTSService):
         aiohttp_session: aiohttp.ClientSession,
         base_url: str,
         voice: str = "Elena.wav",
-        is_voice_cloned: bool = False,
         language: str = "es",
         temperature: float = 0.8,
         exaggeration: float = 1.3,
         cfg_weight: float = 0.5,
         speed_factor: float = 1.0,
         seed: Optional[int] = 1775,
+        chunk_size: Optional[int] = None,
         sample_rate: int = 24000,
         **kwargs,
     ):
@@ -55,20 +56,43 @@ class ChatterboxServerTTS(TTSService):
         self._cfg_weight = cfg_weight
         self._speed_factor = speed_factor
         self._seed = seed
+        self._chunk_size = chunk_size
+        self._voice_mode = "predefined"
         self.set_voice(voice)
-        # TODO: there is a GET endpoint in base_url/get_predefined_voices
-        # that returns a list of predefined voices:
-        # [{"display_name": "Elena", "filename": "Elena.wav"}]
-        # we can check that list and set _is_voice_cloned to False is the voice in the list
-        # or directly set a self._voice_mode directly
-        self._is_voice_cloned = is_voice_cloned
+
+    async def start(self, frame: StartFrame):
+        await super().start(frame)
+        await self._fetch_voice_mode()
+
+    async def _fetch_voice_mode(self):
+        """Query the server for predefined voices and set voice_mode accordingly."""
+        try:
+            async with self._session.get(
+                f"{self._base_url}/get_predefined_voices"
+            ) as resp:
+                if resp.status == 200:
+                    voices = await resp.json()
+                    filenames = {v.get("filename") for v in voices}
+                    voice = self._voice_id
+                    if not voice.lower().endswith(".wav"):
+                        voice = f"{voice}.wav"
+                    self._voice_mode = "predefined" if voice in filenames else "clone"
+                    logger.info(
+                        f"Chatterbox voice_mode for '{self._voice_id}': {self._voice_mode}"
+                    )
+                else:
+                    logger.warning(
+                        f"Could not fetch predefined voices ({resp.status}), defaulting to 'predefined'"
+                    )
+        except Exception as e:
+            logger.warning(f"Could not fetch predefined voices: {e}, defaulting to 'predefined'")
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
         voice = self._voice_id
         if not voice.lower().endswith(".wav"):
             voice = f"{voice}.wav"
 
-        voice_mode = "clone" if self._is_voice_cloned else "predefined"
+        voice_mode = self._voice_mode
 
         payload = {
             "text": text,
@@ -86,6 +110,9 @@ class ChatterboxServerTTS(TTSService):
             payload["reference_audio_filename"] = voice
         if self._seed is not None:
             payload["seed"] = self._seed
+        if self._chunk_size and self._chunk_size > 0:
+            payload["split_text"] = True
+            payload["chunk_size"] = self._chunk_size
 
         try:
             async with self._session.post(

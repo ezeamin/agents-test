@@ -95,7 +95,7 @@ def create_tts_service(session: aiohttp.ClientSession):
             aiohttp_session=session,
             base_url=f"http://{ec2_host}:{os.getenv('EC2_CHATTERBOX_PORT', 8004)}",
             voice="Juanma.wav",
-            is_voice_cloned=True
+            chunk_size=120
         )
     elif tts_service_provider == "CHATTERBOX_SERVER_OPENAI":
         ec2_host = os.getenv('EC2_HOST_CHATTERBOX', os.getenv('EC2_HOST'))
