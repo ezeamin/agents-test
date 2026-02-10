@@ -14,6 +14,7 @@ from pipecat.services.piper.tts import PiperTTSService
 from pipecat.services.xtts.tts import XTTSService
 
 from helpers.whisper_livekit_custom_integration import WhisperLiveKitSTT
+from helpers.chatterbox_custom_integration import ChatterboxServerTTS, ChatterboxServerTTSOpenAI
 
 # Descargar recursos de NLTK necesarios para PiperTTS
 try:
@@ -73,7 +74,7 @@ def create_stt_service():
 
 def create_tts_service(session: aiohttp.ClientSession):
     """Crea y configura el servicio de Text-to-Speech (Piper)"""
-    tts_service_provider = os.getenv("TTS_SERVICE_PROVIDER", "POLLY")
+    tts_service_provider = os.getenv("TTS_SERVICE_PROVIDER", "CHATTERBOX_SERVER")
     if tts_service_provider == "PIPER":
         base_url = os.getenv("PIPER_BASE_URL", "http://localhost:5002")
         return PiperTTSService(
@@ -86,14 +87,23 @@ def create_tts_service(session: aiohttp.ClientSession):
             base_url="http://localhost:5002",
             aiohttp_session=session,
         )
-    elif tts_service_provider == "CHATTERBOX":
+    elif tts_service_provider == "CHATTERBOX_SERVER":
         ec2_host = os.getenv('EC2_HOST_CHATTERBOX', os.getenv('EC2_HOST'))
         if not ec2_host:
             raise ValueError("Must set EC2_HOST")
-        return OpenAITTSService(
-            base_url=f"http://{ec2_host}:{os.getenv('EC2_CHATTERBOX_PORT', 8004)}/v1",
-            voice="",
-            api_key="NONE"
+        return ChatterboxServerTTS(
+            aiohttp_session=session,
+            base_url=f"http://{ec2_host}:{os.getenv('EC2_CHATTERBOX_PORT', 8004)}",
+            voice="Elena.wav",
+        )
+    elif tts_service_provider == "CHATTERBOX_SERVER_OPENAI":
+        ec2_host = os.getenv('EC2_HOST_CHATTERBOX', os.getenv('EC2_HOST'))
+        if not ec2_host:
+            raise ValueError("Must set EC2_HOST")
+        return ChatterboxServerTTSOpenAI(
+            aiohttp_session=session,
+            base_url=f"http://{ec2_host}:{os.getenv('EC2_CHATTERBOX_PORT', 8004)}",
+            voice="Emily.wav",
         )
     elif tts_service_provider == "POLLY":
         return PollyTTSService(
