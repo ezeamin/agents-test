@@ -76,15 +76,11 @@ def create_tts_service(session: aiohttp.ClientSession):
     """Crea y configura el servicio de Text-to-Speech (Piper)"""
     tts_service_provider = os.getenv("TTS_SERVICE_PROVIDER", "CHATTERBOX_SERVER")
     if tts_service_provider == "PIPER":
-        base_url = os.getenv("PIPER_BASE_URL", "http://localhost:5002")
+        ec2_host = os.getenv('EC2_HOST_PIPER', os.getenv('EC2_HOST'))
+        if not ec2_host:
+            raise ValueError("Must set EC2_HOST")
         return PiperTTSService(
-            base_url=base_url,
-            aiohttp_session=session,
-        )
-    elif tts_service_provider == "XTTS":
-        return XTTSService(
-            voice_id="Claribel Dervla",
-            base_url="http://localhost:5002",
+            base_url=f"http://{ec2_host}:{os.getenv('EC2_PIPER_PORT', 5002)}",
             aiohttp_session=session,
         )
     elif tts_service_provider == "CHATTERBOX_SERVER":
