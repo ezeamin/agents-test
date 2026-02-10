@@ -6,12 +6,11 @@ piper-tts
 onnxruntime
 flask
 pipecat-ai[local-smart-turn-v3]
-pipecat-ai[aws]
 boto3
-pipecat-ai[daily]
-pipecat-ai[runner]
-pipecat-ai[webrtc]
-pipecat-ai[tracing]
+pipecat-ai[daily,runner,webrtc,tracing]
+pipecat-ai[aws,openai,deepgram,whisper,xtts]
 fastapi
 websockets
 faster-whisper
+opentelemetry-sdk
+nltk

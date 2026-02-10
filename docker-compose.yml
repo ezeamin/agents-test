@@ -1,0 +1,35 @@
+services:
+  nova-agent:
+    build: .
+    container_name: strata_nova_agent
+    depends_on:
+      - piper-server
+    # Added --host 0.0.0.0 explicitly as you found necessary
+    command: uv run src/agent.py --host 0.0.0.0
+    ports:
+      - "7860:7860"
+      # Adding a small UDP range for WebRTC media just in case
+      - "10000-10005:10000-10005/udp"
+    env_file:
+      - .env
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      - TTS_SERVICE_PROVIDER=PIPER
+      - PIPER_BASE_URL=http://piper-server:5002
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  piper-server:
+    build: .
+    container_name: strata_piper_tts
+    command: uv run src/run_piper.py
+    volumes:
+      - ./voice:/app/voice
+    environment:
+      - PIPER_PORT=5002
+      - CURRENT_VOICE=${CURRENT_VOICE}
+      - CURRENT_VOICE_CONFIG=${CURRENT_VOICE_CONFIG}
+    ports:
+      - "5002:5002"
