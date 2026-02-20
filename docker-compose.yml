@@ -3,13 +3,9 @@ services:
     build: .
     container_name: strata_nova_agent
     command: uv run src/agent.py --host 0.0.0.0
-    ports:
-      - "7860:7860"
-      - "10000-10005:10000-10005/udp"
+    network_mode: host
     env_file:
       - .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   # Uncomment to use Piper TTS (set TTS_SERVICE_PROVIDER=PIPER in .env)
   # piper-server:
