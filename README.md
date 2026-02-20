@@ -89,7 +89,9 @@ docker compose up --build
 
 ### WhisperLiveKit (Streaming) — Default
 
-STT en streaming via WebSocket. Transcribe audio mientras el usuario habla, sin esperar a que termine.
+STT en streaming via WebSocket. Transcribe audio mientras el usuario habla, sin esperar a que termine (conocido en el mundo de ASR como *streaming* o *live*).
+
+A pesar de que el nombre hace referencia a Livekit, el otro framework dedicado a la gestión de VoiceAgents, el servicio es compatible con cualquier tipo de conexión Websocket. Aún más, el framework Livekit no tiene soporte para este servicio específico, así que parece ser pura coincidencia de nombres o algo por el estilo.
 
 - Plugin custom: `src/helpers/whisper_livekit_custom_integration.py`
 - Protocolo: WebSocket en `ws://{host}:{port}/asr`
@@ -97,7 +99,23 @@ STT en streaming via WebSocket. Transcribe audio mientras el usuario habla, sin 
 
 #### Despliegue del servidor WhisperLiveKit
 
-<!-- TODO: documentar despliegue del servidor WhisperLiveKit -->
+El despliegue del servidor se puede hacer con la librería oficial ofrecida en [el repositorio de WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit). Además, como requerimiento es necesario disponer de `ffmpeg` y `portaudio` en el sistema y `pyaudio` en el entorno de Python.
+
+Por lo tanto, los comandos para el despliegue del servidor utilizando el gestor de paquete `uv` son:
+
+```bash
+sudo apt update
+sudo apt install python3 python3-venv python3-pip ffmpeg -y
+sudo apt install portaudio19-dev python3-dev
+uv venv
+source .venv/bin/activate
+uv pip install whisperlivekit
+uv pip install pyaudio
+wlk --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es 
+# whisperlivekit-server --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es
+```
+
+Obviamente es posible alternar entre los distintos modelos de la familia whisper cambiando el valor del parámetro `--model`, (`tiny`, `base`, `small`, `medium`, `large`), aunque es importante tener en cuenta que los modelos más grandes requieren de una mayor capacidad de cómputo y memoria, por lo que es recomendable probar primero con los modelos más pequeños para asegurarse de que el servidor funciona correctamente antes de intentar con los modelos más grandes. Además se puede configurar cuestiones como el host y puerto del servidor levantado y el idioma del modelo, que se configurará en autodetección si no se especifica. El parámetro `--pcm-input` permite enviar el audio en formato PCM sin procesar, lo que puede ser útil para reducir la latencia y mejorar la calidad de la transcripción, y es utilizado por defecto en la integración STT de Pipecat.
 
 ### Deepgram
 
@@ -117,7 +135,46 @@ TTS via servidor Chatterbox con soporte para voces predefinidas y clonadas. Dete
 
 #### Despliegue del servidor Chatterbox
 
-<!-- TODO: documentar despliegue del servidor Chatterbox -->
+El servidor de Chatterbox utiliza la implementación [Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server). Este servidor ofrece acceso a los modelos deplegados de manera local a través de una API REST con WebRTC. Además, el servidor provee una interfaz web para hacer pruebas y subir archivos de audio para la clonación de voces.
+
+Al momento de instalar Chatterbox Server, el método más simple provisto por los desarrolladores es ejecutar el script `start.sh` con bash de Linux, `start.bat` con cmd de Windows o `start.py` con Python.
+
+Si bien el mismo solicitaba que la versión de Python fuera mayor a 3.10, las pruebas hechas con Python 3.12 levantaban algunos errores de dependencias entre librerías propias de Python como *setuptools* y librerías externas como *numpy*. Para solucionarlo, utilizando el gestor de ambientes (uv o pip) se fijó la versión de Python a 3.10 y se instalaron los paquetes de manera manual (install requirements.txt o requirements-nvidia.txt) y ejecutando el script de server.py.
+
+Es probable que estos problemas de dependencias se resuelvan a futuro, o que en caso de desarrollar el server con Docker, se pueda partir de una imagen con python 3.10 de base y ejecutar el script de start. Esto es también posible desde la instancia manualmente, pero es mucho más simple utilizar un gestor de paquetes porque las versiones de Python se asignan desde la AMI y puede generar issues cambiarlas.
+
+Debido a esto, en reemplazo del script de *start*, el despliegue del servidor utilizando uv consiste en:
+
+```bash
+# instalar uv para gestión de librerías
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# clonar repositorio
+git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+cd Chatterbox-TTS-Server
+# crear entorno de uv con python 3.10 (y activarlo)
+uv venv --python 3.10
+source .venv/bin/activate
+# actualizar las librerias de pip, whl y setuptools (las que daban problemas con python 3.12)
+uv pip install --upgrade pip whl setuptools
+# instalar requerimientos, en caso de no saber cuáles instalar se puede ejecutar el start.sh una vez aunque falle y ver cuál recomienda
+uv pip install -r requirements-nvidia.txt
+# ejecutar el servidor
+uv run server.py
+```
+
+**NOTA:** A pesar de que el README del servidor comenta que se puede usar el modelo multilingüe con 23 idiomas, al momento de escribir esta documentación el servidor solo implementa las versiones en inglés, que al usar otros idiomas genera una voz con acento inglés. Existe un [Pull Request (PR) de fork externo]() intentando implementar esta funcionalidad, pero aún no ha sido mergeado. Es posible usar [el repositorio del fork](https://github.com/4-alok/Chatterbox-TTS-Server), pero es conveniente instalar los requerimientos del servidor desde el repositorio original:
+
+```bash
+git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+cd Chatterbox-TTS-Server
+uv venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cd ..
+git clone https://github.com/4-alok/Chatterbox-TTS-Server.git Chatterbox-TTS-Server-ML
+cd Chatterbox-TTS-Server-ML
+uv run --active server.py # sin la opción --active, uv levanta un error de que el entorno no se encuentra en la carpeta donde se está ejecutando el código.
+```
 
 ### AWS Polly
 
