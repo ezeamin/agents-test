@@ -104,10 +104,10 @@ class DebugFrameCapture(FrameProcessor):
         elif isinstance(frame, TTSStoppedFrame):
             asyncio.create_task(_debug.send("tts_stop"))
 
-        # super() handles SystemFrames (StartFrame, CancelFrame, etc.)
-        # All other frames must be pushed manually
-        if not isinstance(frame, SystemFrame):
-            await self.push_frame(frame, direction)
+        # super().process_frame() only does internal bookkeeping (e.g.
+        # setting __started on StartFrame) — it does NOT push frames.
+        # We must push every frame ourselves.
+        await self.push_frame(frame, direction)
 
 
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
