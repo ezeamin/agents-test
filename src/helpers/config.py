@@ -2,35 +2,11 @@
 import os
 from dotenv import load_dotenv
 
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.daily.transport import DailyParams
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
-
 load_dotenv(override=True)
 
-# Servidores ICE (STUN/TURN) para WebRTC en producción
+# Servidores ICE (STUN/TURN) para WebRTC — configurable vía .env
+# Ejemplo con TURN: "stun:stun.l.google.com:19302,turn:turn.example.com:3478?transport=udp"
 ICE_SERVERS = os.getenv("ICE_SERVERS", "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302").split(",")
-
-# Configuración de transports
-transport_params = {
-    "daily": lambda: DailyParams(
-        audio_in_enabled=True,
-        audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
-    ),
-    "twilio": lambda: FastAPIWebsocketParams(
-        audio_in_enabled=True,
-        audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
-    ),
-    "webrtc": lambda: TransportParams(
-        audio_in_enabled=True,
-        audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
-    ),
-}
 
 # Mensaje del sistema para el LLM
 SYSTEM_MESSAGE = (

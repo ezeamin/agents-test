@@ -1,7 +1,15 @@
 """Agente de voz con pipeline STT -> LLM -> TTS"""
+import argparse
+from contextlib import asynccontextmanager
+
 import aiohttp
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI
+from fastapi.responses import FileResponse
 
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import LLMRunFrame
 from pipecat.observers.loggers.metrics_log_observer import MetricsLogObserver
 from pipecat.pipeline.pipeline import Pipeline
@@ -12,14 +20,18 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.runner.types import RunnerArguments
-from pipecat.runner.utils import create_transport
-from pipecat.transports.base_transport import BaseTransport
+from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
+from pipecat.transports.smallwebrtc.request_handler import (
+    SmallWebRTCPatchRequest,
+    SmallWebRTCRequest,
+    SmallWebRTCRequestHandler,
+)
+from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from helpers import (
-    transport_params,
     SYSTEM_MESSAGE,
     tools_list,
     tools_schema,
@@ -27,27 +39,32 @@ from helpers import (
     create_tts_service,
     create_llm_service,
 )
+from helpers.config import ICE_SERVERS
 
 
-async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
-    """Configura y ejecuta el bot de voz"""
+async def run_bot(webrtc_connection: SmallWebRTCConnection):
+    """Configura y ejecuta el bot de voz para una conexión WebRTC."""
     print("Starting bot")
+
+    transport = SmallWebRTCTransport(
+        webrtc_connection=webrtc_connection,
+        params=TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+        ),
+    )
 
     async with aiohttp.ClientSession() as session:
         stt = create_stt_service()
         tts = create_tts_service(session)
         llm = create_llm_service()
 
-        # Configurar mensajes y contexto (system prompt y tools)
         for tool in tools_list:
             llm.register_direct_function(handler=tool, cancel_on_interruption=True)
         messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-        context = LLMContext(
-            messages,
-            tools=tools_schema
-        )
+        context = LLMContext(messages, tools=tools_schema)
 
-        # Configurar agregadores con estrategias de turn
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
@@ -79,7 +96,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             ),
             observers=[MetricsLogObserver()],
             enable_turn_tracking=True,
-            idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
+            idle_timeout_secs=300,
         )
 
         @transport.event_handler("on_client_connected")
@@ -95,19 +112,53 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             print("Client disconnected")
             await task.cancel()
 
-        runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
+        runner = PipelineRunner(handle_sigint=False)
         await runner.run(task)
 
 
-async def bot(runner_args: RunnerArguments):
-    """Punto de entrada del bot"""
-    if hasattr(runner_args, "webrtc_connection") and runner_args.webrtc_connection:
-        from helpers.config import ICE_SERVERS
-        runner_args.webrtc_connection._ice_servers = ICE_SERVERS
-    transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args)
+# --- HTTP / WebRTC Server ---
+
+_handler: SmallWebRTCRequestHandler = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _handler
+    _handler = SmallWebRTCRequestHandler(
+        ice_servers=[IceServer(urls=ICE_SERVERS)]
+    )
+    yield
+    await _handler.close()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/api/offer")
+async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
+    async def on_connection(connection: SmallWebRTCConnection):
+        background_tasks.add_task(run_bot, connection)
+
+    return await _handler.handle_web_request(
+        request=request,
+        webrtc_connection_callback=on_connection,
+    )
+
+
+@app.patch("/api/offer")
+async def ice_candidate(request: SmallWebRTCPatchRequest):
+    await _handler.handle_patch_request(request)
+    return {"status": "success"}
+
+
+@app.get("/")
+async def serve_index():
+    return FileResponse("src/client.html")
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
-    main()
+    parser = argparse.ArgumentParser(description="Nova Voice Agent")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=7860)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)

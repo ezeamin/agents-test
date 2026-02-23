@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova — Strata Sportiva</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        #status { font-size: 20px; margin: 20px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Nova — Strata Sportiva</h1>
+    <p id="status">Desconectado</p>
+    <button id="connect-btn">Conectar</button>
+    <audio id="audio-el" autoplay></audio>
+
+    <script>
+        const statusEl = document.getElementById("status")
+        const buttonEl = document.getElementById("connect-btn")
+        const audioEl  = document.getElementById("audio-el")
+
+        let connected = false
+        let peerConnection = null
+
+        const sendIceCandidate = async (pc, candidate) => {
+            await fetch("/api/offer", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    pc_id: pc.pc_id,
+                    candidates: [{
+                        candidate:       candidate.candidate,
+                        sdp_mid:         candidate.sdpMid,
+                        sdp_mline_index: candidate.sdpMLineIndex,
+                    }],
+                }),
+            })
+        }
+
+        const connect = async () => {
+            _onConnecting()
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            const audioTrack = stream.getAudioTracks()[0]
+
+            const pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                    { urls: "stun:stun1.l.google.com:19302" },
+                ],
+            })
+
+            pc.pendingIceCandidates = []
+            pc.canSendIceCandidates = false
+
+            pc.ontrack = e => { audioEl.srcObject = e.streams[0] }
+
+            pc.oniceconnectionstatechange = () => {
+                console.log("ICE state:", pc.iceConnectionState)
+            }
+            pc.onconnectionstatechange = () => {
+                console.log("Connection state:", pc.connectionState)
+                if (pc.connectionState === "connected")    _onConnected()
+                if (pc.connectionState === "disconnected") _onDisconnected()
+            }
+            pc.onicecandidate = async (event) => {
+                if (!event.candidate) return
+                if (pc.canSendIceCandidates && pc.pc_id) {
+                    await sendIceCandidate(pc, event.candidate)
+                } else {
+                    pc.pendingIceCandidates.push(event.candidate)
+                }
+            }
+
+            // SmallWebRTCTransport expects both audio and video transceivers
+            pc.addTransceiver(audioTrack, { direction: "sendrecv" })
+            pc.addTransceiver("video",    { direction: "sendrecv" })
+
+            await pc.setLocalDescription(await pc.createOffer())
+            const response = await fetch("/api/offer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+            })
+            const answer = await response.json()
+            pc.pc_id = answer.pc_id
+            await pc.setRemoteDescription(answer)
+
+            pc.canSendIceCandidates = true
+            for (const c of pc.pendingIceCandidates) await sendIceCandidate(pc, c)
+            pc.pendingIceCandidates = []
+
+            peerConnection = pc
+        }
+
+        const disconnect = () => {
+            if (!peerConnection) return
+            peerConnection.close()
+            peerConnection = null
+            _onDisconnected()
+        }
+
+        const _onConnecting   = () => { statusEl.textContent = "Conectando…"; buttonEl.textContent = "Desconectar"; connected = true }
+        const _onConnected    = () => { statusEl.textContent = "Conectado";   buttonEl.textContent = "Desconectar" }
+        const _onDisconnected = () => { statusEl.textContent = "Desconectado"; buttonEl.textContent = "Conectar"; connected = false }
+
+        buttonEl.addEventListener("click", () => connected ? disconnect() : connect())
+    </script>
+</body>
+</html>
