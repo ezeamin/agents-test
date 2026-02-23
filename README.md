@@ -1,18 +1,28 @@
-# Pipecat AI Voice Agent
+# Pipecat AI Voice Agent — Nova
 
 Agente conversacional de voz construido con [Pipecat AI](https://github.com/pipecat-ai/pipecat). Pipeline configurable de STT, LLM y TTS con soporte para multiples proveedores.
 
 ## Arquitectura
 
 ```
-Browser/Phone
-     |
-  Transport (WebRTC / Daily / Twilio)
-     |
-  STT  -->  LLM  -->  TTS
-     |                   |
-  WhisperLiveKit    Chatterbox Server
-  Deepgram          Polly / Piper
+Browser
+   │  WebRTC (SmallWebRTCTransport)
+   ▼
+agent.py  ──  FastAPI server  ──  /api/offer (WebRTC signaling)
+                                  /ws/debug  (debug events → frontend)
+                                  /          (debug frontend)
+   │
+   ▼
+pipelines/nova.py
+   │
+   ├── STT  →  [DebugCapture]  →  UserAggregator
+   │   WhisperLiveKit / Deepgram / Whisper local
+   │
+   ├── LLM  →  [DebugCapture]
+   │   AWS Bedrock (Claude Haiku 4.5)
+   │
+   └── TTS  →  [DebugCapture]  →  audio out
+       Chatterbox Server / Polly / Piper / ElevenLabs
 ```
 
 ## Estructura del Proyecto
@@ -20,20 +30,24 @@ Browser/Phone
 ```
 .
 ├── src/
-│   ├── agent.py                  # Pipeline principal: Transport -> STT -> LLM -> TTS
+│   ├── agent.py              # FastAPI server: WebRTC signaling + debug WS + static
+│   ├── frontend/
+│   │   └── index.html        # Debug UI: mic mute, STT transcript, LLM text, event log
+│   ├── pipelines/
+│   │   └── nova.py           # Pipeline: DebugBroadcaster, DebugFrameCapture, run_bot
 │   └── helpers/
-│       ├── config.py             # Transports, VAD, system prompt
-│       ├── services.py           # Factories de STT/TTS/LLM por env vars
-│       ├── tools.py              # Tool definitions para el LLM
+│       ├── config.py         # ICE_SERVERS, SYSTEM_MESSAGE
+│       ├── services.py       # Factories de STT/TTS/LLM por env vars
+│       ├── tools.py          # Tool definitions para el LLM
 │       ├── whisper_livekit_custom_integration.py   # Plugin STT: WhisperLiveKit streaming
 │       └── chatterbox_custom_integration.py        # Plugin TTS: Chatterbox Server
 ├── scripts/
 │   ├── piper/
-│   │   ├── Dockerfile            # Imagen Docker para Piper TTS
-│   │   └── run_piper.py          # Launcher del servidor Piper
+│   │   ├── Dockerfile        # Imagen Docker para Piper TTS
+│   │   └── run_piper.py      # Launcher del servidor Piper
 │   └── whisperlivekit_websocket.py  # Script de test para WebSocket STT
-├── Dockerfile                    # Imagen Docker del agente
-├── docker-compose.yml
+├── Dockerfile                # Imagen Docker del agente
+├── docker-compose.yml        # network_mode: host (necesario para WebRTC en EC2)
 ├── requirements.txt
 └── .env.example
 ```
@@ -56,8 +70,9 @@ cp .env.example .env
 
 | Variable | Default | Descripcion |
 |---|---|---|
-| `STT_SERVICE_PROVIDER` | `WHISPER-STREAM` | `WHISPER-STREAM` \| `DEEPGRAM` |
-| `TTS_SERVICE_PROVIDER` | `CHATTERBOX_SERVER` | `CHATTERBOX_SERVER` \| `CHATTERBOX_SERVER_OPENAI` \| `PIPER` \| `POLLY` |
+| `STT_SERVICE_PROVIDER` | `WHISPER_STREAM` | `WHISPER_STREAM` \| `WHISPER` \| `DEEPGRAM` |
+| `TTS_SERVICE_PROVIDER` | `CHATTERBOX_SERVER` | `CHATTERBOX_SERVER` \| `CHATTERBOX_SERVER_OPENAI` \| `PIPER` \| `POLLY` \| `ELEVENLABS` |
+| `ICE_SERVERS` | Google STUN | URLs ICE separadas por comas. Ver nota de producción abajo. |
 | `EC2_HOST` | — | Host por defecto para todos los servidores remotos |
 | `EC2_HOST_WHISPER_STREAM` | `EC2_HOST` | Override para el servidor WhisperLiveKit |
 | `EC2_HOST_CHATTERBOX` | `EC2_HOST` | Override para el servidor Chatterbox |
@@ -70,52 +85,61 @@ cp .env.example .env
 | `AWS_SESSION_TOKEN` | — | |
 | `AWS_DEFAULT_REGION` | `us-east-1` | |
 | `DEEPGRAM_API_KEY` | — | Solo si `STT_SERVICE_PROVIDER=DEEPGRAM` |
+| `ELEVENLABS_API_KEY` | — | Solo si `TTS_SERVICE_PROVIDER=ELEVENLABS` |
 
 ## Ejecucion
 
 ```bash
-uv run src/agent.py
+uv run src/agent.py   # http://localhost:7860
 ```
 
-El agente expone un servidor WebRTC en el puerto 7860.
+### Docker (EC2)
 
-### Docker
+El agente usa `network_mode: host` para que `aiortc` pueda enlazarse directamente a las interfaces del host. Esto es necesario para que STUN descubra la IP pública correcta en EC2. Con `EC2_HOST=localhost` en `.env`:
 
 ```bash
 docker compose up --build
 ```
 
+### Test de conexion STT
+
+```bash
+python scripts/whisperlivekit_websocket.py
+```
+
+## ICE Servers — Nota de Produccion
+
+La configuracion por defecto usa STUN de Google, suficiente para desarrollo pero no para produccion. En redes con NAT simétrico, firewalls corporativos o desde dispositivos móviles puede fallar. **Para produccion usar un servidor TURN.**
+
+Proveedores compatibles (configurar via `ICE_SERVERS` en `.env`):
+- **Twilio NTS** — Pipecat tiene transporte nativo de Twilio
+- **Daily** — Pipecat tiene transporte nativo de Daily
+- **Telnyx** — Pipecat tiene transporte nativo de Telnyx
+- **Metered.ca** — Tier gratuito disponible
+- **Cloudflare TURN** — En beta, tier gratuito generoso
+- **Coturn** — Self-hosted, puede correr como sidecar en la misma instancia EC2
+
 ## Proveedores de STT
 
 ### WhisperLiveKit (Streaming) — Default
 
-STT en streaming via WebSocket. Transcribe audio mientras el usuario habla, sin esperar a que termine (conocido en el mundo de ASR como *streaming* o *live*).
-
-A pesar de que el nombre hace referencia a Livekit, el otro framework dedicado a la gestión de VoiceAgents, el servicio es compatible con cualquier tipo de conexión Websocket. Aún más, el framework Livekit no tiene soporte para este servicio específico, así que parece ser pura coincidencia de nombres o algo por el estilo.
+STT en streaming via WebSocket. Transcribe audio mientras el usuario habla sin esperar a que termine.
 
 - Plugin custom: `src/helpers/whisper_livekit_custom_integration.py`
 - Protocolo: WebSocket en `ws://{host}:{port}/asr`
-- Env: `STT_SERVICE_PROVIDER=WHISPER-STREAM`
+- Env: `STT_SERVICE_PROVIDER=WHISPER_STREAM`
 
 #### Despliegue del servidor WhisperLiveKit
 
-El despliegue del servidor se puede hacer con la librería oficial ofrecida en [el repositorio de WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit). Además, como requerimiento es necesario disponer de `ffmpeg` y `portaudio` en el sistema y `pyaudio` en el entorno de Python.
-
-Por lo tanto, los comandos para el despliegue del servidor utilizando el gestor de paquete `uv` son:
-
 ```bash
 sudo apt update
-sudo apt install python3 python3-venv python3-pip ffmpeg -y
-sudo apt install portaudio19-dev python3-dev
-uv venv
-source .venv/bin/activate
-uv pip install whisperlivekit
-uv pip install pyaudio
-wlk --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es 
-# whisperlivekit-server --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es
+sudo apt install python3 python3-venv python3-pip ffmpeg portaudio19-dev python3-dev -y
+uv venv && source .venv/bin/activate
+uv pip install whisperlivekit pyaudio
+wlk --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es
 ```
 
-Obviamente es posible alternar entre los distintos modelos de la familia whisper cambiando el valor del parámetro `--model`, (`tiny`, `base`, `small`, `medium`, `large`), aunque es importante tener en cuenta que los modelos más grandes requieren de una mayor capacidad de cómputo y memoria, por lo que es recomendable probar primero con los modelos más pequeños para asegurarse de que el servidor funciona correctamente antes de intentar con los modelos más grandes. Además se puede configurar cuestiones como el host y puerto del servidor levantado y el idioma del modelo, que se configurará en autodetección si no se especifica. El parámetro `--pcm-input` permite enviar el audio en formato PCM sin procesar, lo que puede ser útil para reducir la latencia y mejorar la calidad de la transcripción, y es utilizado por defecto en la integración STT de Pipecat.
+Modelos disponibles: `tiny`, `base`, `small`, `medium`, `large`. El parámetro `--pcm-input` es requerido por la integración de Pipecat.
 
 ### Deepgram
 
@@ -135,50 +159,32 @@ TTS via servidor Chatterbox con soporte para voces predefinidas y clonadas. Dete
 
 #### Despliegue del servidor Chatterbox
 
-El servidor de Chatterbox utiliza la implementación [Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server). Este servidor ofrece acceso a los modelos deplegados de manera local a través de una API REST con WebRTC. Además, el servidor provee una interfaz web para hacer pruebas y subir archivos de audio para la clonación de voces.
-
-Al momento de instalar Chatterbox Server, el método más simple provisto por los desarrolladores es ejecutar el script `start.sh` con bash de Linux, `start.bat` con cmd de Windows o `start.py` con Python.
-
-Si bien el mismo solicitaba que la versión de Python fuera mayor a 3.10, las pruebas hechas con Python 3.12 levantaban algunos errores de dependencias entre librerías propias de Python como *setuptools* y librerías externas como *numpy*. Para solucionarlo, utilizando el gestor de ambientes (uv o pip) se fijó la versión de Python a 3.10 y se instalaron los paquetes de manera manual (install requirements.txt o requirements-nvidia.txt) y ejecutando el script de server.py.
-
-Es probable que estos problemas de dependencias se resuelvan a futuro, o que en caso de desarrollar el server con Docker, se pueda partir de una imagen con python 3.10 de base y ejecutar el script de start. Esto es también posible desde la instancia manualmente, pero es mucho más simple utilizar un gestor de paquetes porque las versiones de Python se asignan desde la AMI y puede generar issues cambiarlas.
-
-Debido a esto, en reemplazo del script de *start*, el despliegue del servidor utilizando uv consiste en:
+Utiliza [Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server). Requiere Python 3.10 (hay conflictos de dependencias con 3.12):
 
 ```bash
-# instalar uv para gestión de librerías
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# clonar repositorio
 git clone https://github.com/devnen/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
-# crear entorno de uv con python 3.10 (y activarlo)
-uv venv --python 3.10
-source .venv/bin/activate
-# actualizar las librerias de pip, whl y setuptools (las que daban problemas con python 3.12)
+uv venv --python 3.10 && source .venv/bin/activate
 uv pip install --upgrade pip whl setuptools
-# instalar requerimientos, en caso de no saber cuáles instalar se puede ejecutar el start.sh una vez aunque falle y ver cuál recomienda
 uv pip install -r requirements-nvidia.txt
-# ejecutar el servidor
 uv run server.py
 ```
 
-**NOTA:** A pesar de que el README del servidor comenta que se puede usar el modelo multilingüe con 23 idiomas, al momento de escribir esta documentación el servidor solo implementa las versiones en inglés, que al usar otros idiomas genera una voz con acento inglés. Existe un [Pull Request (PR) de fork externo]() intentando implementar esta funcionalidad, pero aún no ha sido mergeado. Es posible usar [el repositorio del fork](https://github.com/4-alok/Chatterbox-TTS-Server), pero es conveniente instalar los requerimientos del servidor desde el repositorio original:
+**Nota multilingüe:** Al momento de escribir esto el servidor solo implementa voces en inglés. Para español usar [el fork con soporte multilingüe](https://github.com/4-alok/Chatterbox-TTS-Server), instalando requirements desde el repo original:
 
 ```bash
 git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
-uv venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd ..
+cd Chatterbox-TTS-Server && uv venv && source .venv/bin/activate
+pip install -r requirements.txt && cd ..
 git clone https://github.com/4-alok/Chatterbox-TTS-Server.git Chatterbox-TTS-Server-ML
 cd Chatterbox-TTS-Server-ML
-uv run --active server.py # sin la opción --active, uv levanta un error de que el entorno no se encuentra en la carpeta donde se está ejecutando el código.
+uv run --active server.py
 ```
 
 ### AWS Polly
 
-TTS cloud via AWS Polly (voz Lupe, motor generative, spanish).
+TTS cloud via AWS Polly (voz Lupe, motor generative, español).
 
 - Env: `TTS_SERVICE_PROVIDER=POLLY`
 
@@ -193,7 +199,7 @@ TTS local/remoto open-source. Requiere un servidor Piper separado.
 
 ### AWS Bedrock
 
-Claude Haiku 4.5 via AWS Bedrock. Configurado con tools para busqueda de productos, carrito y ordenes.
+Claude Haiku 4.5 via AWS Bedrock. Configurado con tools para búsqueda de productos, carrito y órdenes.
 
 ## Metricas
 
@@ -204,3 +210,11 @@ El agente usa `MetricsLogObserver` de Pipecat para loggear automaticamente:
 - **TTS usage**: Caracteres procesados
 
 Las metricas se imprimen en stdout con el pipeline activo.
+
+## Debug Frontend
+
+Accesible en `http://<host>:7860`. Incluye:
+- Botón conectar/desconectar y silenciar micrófono
+- Panel **Usuario (STT)**: muestra transcripcion interim en tiempo real y la transcripcion final
+- Panel **Nova (LLM)**: muestra el texto generado por el LLM en streaming, con indicador de cuando el TTS está hablando
+- **Debug Log**: eventos del pipeline con timestamps y color por tipo

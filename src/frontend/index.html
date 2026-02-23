@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Debug — Strata Sportiva</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 16px; }
+
+        h1 { font-size: 16px; color: #aaa; margin-bottom: 12px; letter-spacing: 1px; text-transform: uppercase; }
+
+        /* Controls bar */
+        #controls { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+        button {
+            padding: 5px 12px; font-size: 12px; font-family: monospace;
+            cursor: pointer; border: 1px solid #444; background: #2a2a2a;
+            color: #ccc; border-radius: 3px;
+        }
+        button:disabled { opacity: 0.35; cursor: not-allowed; }
+        button:hover:not(:disabled) { background: #333; border-color: #666; }
+        button.active { border-color: #f66; color: #f66; }
+
+        #status-badge {
+            font-size: 11px; padding: 3px 8px; border-radius: 10px;
+            background: #2a2a2a; border: 1px solid #444; color: #666;
+        }
+        #status-badge.connecting { border-color: #aa7700; color: #fc0; }
+        #status-badge.connected  { border-color: #226622; color: #6f6; }
+
+        /* Conversation panels */
+        #panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        .panel {
+            background: #1e1e1e; border: 1px solid #333; border-radius: 5px;
+            padding: 10px 12px; min-height: 100px;
+        }
+        .panel-title {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+            color: #555; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+        }
+        .panel-body { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #ccc; }
+        .dim { color: #555; font-style: italic; }
+
+        /* Speaking indicator */
+        .dot {
+            display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            background: #4c4; animation: blink 0.9s infinite;
+        }
+        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+        /* Debug log */
+        #log-wrap { background: #111; border: 1px solid #2a2a2a; border-radius: 5px; padding: 8px 10px; }
+        #log-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #444; margin-bottom: 5px; }
+        #log { font-size: 11px; height: 130px; overflow-y: auto; }
+        #log .row { padding: 1px 0; }
+        #log .ts  { color: #444; margin-right: 6px; }
+        #log .stt { color: #5af; }
+        #log .llm { color: #5c5; }
+        #log .tts { color: #fa5; }
+        #log .con { color: #888; }
+        #log .err { color: #f55; }
+    </style>
+</head>
+<body>
+    <h1>Nova Debug — Strata Sportiva</h1>
+
+    <div id="controls">
+        <button id="btn-connect">Conectar</button>
+        <button id="btn-mute" disabled>Silenciar Mic</button>
+        <span id="status-badge">Desconectado</span>
+    </div>
+
+    <div id="panels">
+        <div class="panel">
+            <div class="panel-title">Usuario (STT)</div>
+            <div id="user-text" class="panel-body"><span class="dim">— esperando —</span></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">
+                Nova (LLM)
+                <span id="tts-dot" class="dot" style="display:none"></span>
+            </div>
+            <div id="agent-text" class="panel-body"><span class="dim">— esperando —</span></div>
+        </div>
+    </div>
+
+    <div id="log-wrap">
+        <div id="log-title">Debug Log</div>
+        <div id="log"></div>
+    </div>
+
+    <audio id="audio-el" autoplay></audio>
+
+    <script>
+        // ── elements ──────────────────────────────────────────────────────────
+        const btnConnect  = document.getElementById("btn-connect")
+        const btnMute     = document.getElementById("btn-mute")
+        const statusBadge = document.getElementById("status-badge")
+        const userTextEl  = document.getElementById("user-text")
+        const agentTextEl = document.getElementById("agent-text")
+        const ttsDotEl    = document.getElementById("tts-dot")
+        const logEl       = document.getElementById("log")
+        const audioEl     = document.getElementById("audio-el")
+
+        // ── state ─────────────────────────────────────────────────────────────
+        let pc         = null
+        let audioTrack = null
+        let muted      = false
+        let connected  = false
+        let llmBuf     = ""
+
+        // ── debug WebSocket ───────────────────────────────────────────────────
+        const openDebugWs = () => {
+            const proto = location.protocol === "https:" ? "wss:" : "ws:"
+            const ws = new WebSocket(`${proto}//${location.host}/ws/debug`)
+
+            ws.onmessage = ({ data }) => handleEvent(JSON.parse(data))
+            ws.onopen    = () => log("con", "Debug WS connected")
+            ws.onclose   = () => { log("con", "Debug WS closed — reconnecting…"); setTimeout(openDebugWs, 2000) }
+            ws.onerror   = () => log("err", "Debug WS error")
+        }
+
+        const handleEvent = (msg) => {
+            switch (msg.type) {
+                case "stt_interim":
+                    userTextEl.innerHTML = `<span class="dim">${esc(msg.text)}</span>`
+                    break
+
+                case "stt_final":
+                    userTextEl.textContent = msg.text
+                    log("stt", `STT → "${msg.text}"`)
+                    break
+
+                case "llm_start":
+                    llmBuf = ""
+                    agentTextEl.innerHTML = `<span class="dim">generando…</span>`
+                    log("llm", "LLM start")
+                    break
+
+                case "llm_text":
+                    llmBuf += msg.text
+                    agentTextEl.textContent = llmBuf
+                    break
+
+                case "llm_end":
+                    log("llm", `LLM end → "${llmBuf.trim().slice(0, 80)}${llmBuf.length > 80 ? "…" : ""}"`)
+                    break
+
+                case "tts_start":
+                    ttsDotEl.style.display = "inline-block"
+                    log("tts", "TTS speaking")
+                    break
+
+                case "tts_stop":
+                    ttsDotEl.style.display = "none"
+                    log("tts", "TTS stopped")
+                    break
+            }
+        }
+
+        // ── WebRTC ────────────────────────────────────────────────────────────
+        const sendCandidate = async (candidate) => {
+            await fetch("/api/offer", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    pc_id: pc.pc_id,
+                    candidates: [{
+                        candidate:       candidate.candidate,
+                        sdp_mid:         candidate.sdpMid,
+                        sdp_mline_index: candidate.sdpMLineIndex,
+                    }],
+                }),
+            })
+        }
+
+        const connect = async () => {
+            setStatus("connecting")
+            log("con", "Connecting…")
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                audioTrack = stream.getAudioTracks()[0]
+
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: "stun:stun.l.google.com:19302" },
+                        { urls: "stun:stun1.l.google.com:19302" },
+                    ],
+                })
+                pc.pendingCandidates  = []
+                pc.canSendCandidates  = false
+                pc.pc_id              = null
+
+                pc.ontrack = e => { audioEl.srcObject = e.streams[0] }
+
+                pc.oniceconnectionstatechange = () => log("con", `ICE → ${pc.iceConnectionState}`)
+
+                pc.onconnectionstatechange = () => {
+                    log("con", `Connection → ${pc.connectionState}`)
+                    if (pc.connectionState === "connected")              onConnected()
+                    if (["disconnected","failed","closed"].includes(pc.connectionState)) onDisconnected()
+                }
+
+                pc.onicecandidate = async ({ candidate }) => {
+                    if (!candidate) return
+                    if (pc.canSendCandidates) {
+                        await sendCandidate(candidate)
+                    } else {
+                        pc.pendingCandidates.push(candidate)
+                    }
+                }
+
+                // SmallWebRTCTransport expects both audio and video transceivers
+                pc.addTransceiver(audioTrack, { direction: "sendrecv" })
+                pc.addTransceiver("video",    { direction: "sendrecv" })
+
+                await pc.setLocalDescription(await pc.createOffer())
+
+                const res    = await fetch("/api/offer", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+                })
+                const answer = await res.json()
+                pc.pc_id = answer.pc_id
+                await pc.setRemoteDescription(answer)
+
+                pc.canSendCandidates = true
+                for (const c of pc.pendingCandidates) await sendCandidate(c)
+                pc.pendingCandidates = []
+
+            } catch (err) {
+                log("err", `Error: ${err.message}`)
+                setStatus("disconnected")
+            }
+        }
+
+        const disconnect = () => {
+            if (pc) { pc.close(); pc = null }
+            onDisconnected()
+        }
+
+        const onConnected = () => {
+            connected = true
+            setStatus("connected")
+            btnConnect.textContent = "Desconectar"
+            btnMute.disabled = false
+            log("con", "Connected")
+        }
+
+        const onDisconnected = () => {
+            connected  = false
+            audioTrack = null
+            muted      = false
+            btnConnect.textContent  = "Conectar"
+            btnMute.textContent     = "Silenciar Mic"
+            btnMute.disabled        = true
+            btnMute.classList.remove("active")
+            setStatus("disconnected")
+        }
+
+        // ── Mute ─────────────────────────────────────────────────────────────
+        btnMute.addEventListener("click", () => {
+            if (!audioTrack) return
+            muted = !muted
+            audioTrack.enabled = !muted
+            btnMute.textContent = muted ? "Activar Mic" : "Silenciar Mic"
+            btnMute.classList.toggle("active", muted)
+            log("con", muted ? "Mic muted" : "Mic unmuted")
+        })
+
+        // ── helpers ───────────────────────────────────────────────────────────
+        const setStatus = (state) => {
+            statusBadge.className = state
+            statusBadge.textContent = { connecting: "Conectando…", connected: "Conectado", disconnected: "Desconectado" }[state] ?? state
+        }
+
+        const log = (type, text) => {
+            const row  = document.createElement("div")
+            row.className = "row"
+            const ts   = new Date().toLocaleTimeString("es", { hour12: false })
+            row.innerHTML = `<span class="ts">${ts}</span><span class="${type}">${esc(text)}</span>`
+            logEl.appendChild(row)
+            if (logEl.children.length > 200) logEl.firstChild.remove()
+            logEl.scrollTop = logEl.scrollHeight
+        }
+
+        const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+        // ── init ──────────────────────────────────────────────────────────────
+        btnConnect.addEventListener("click", () => connected ? disconnect() : connect())
+        openDebugWs()
+    </script>
+</body>
+</html>

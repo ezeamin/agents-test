@@ -1,113 +1,79 @@
-"""Agente de voz con pipeline STT -> LLM -> TTS"""
-import aiohttp
+"""HTTP / WebRTC server — Nova Voice Agent"""
+import argparse
+from contextlib import asynccontextmanager
 
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.frames.frames import LLMRunFrame
-from pipecat.observers.loggers.metrics_log_observer import MetricsLogObserver
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
-)
-from pipecat.runner.types import RunnerArguments
-from pipecat.runner.utils import create_transport
-from pipecat.transports.base_transport import BaseTransport
-from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
-from pipecat.turns.user_turn_strategies import UserTurnStrategies
-
-from helpers import (
-    transport_params,
-    SYSTEM_MESSAGE,
-    tools_list,
-    tools_schema,
-    create_stt_service,
-    create_tts_service,
-    create_llm_service,
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
+from pipecat.transports.smallwebrtc.request_handler import (
+    SmallWebRTCPatchRequest,
+    SmallWebRTCRequest,
+    SmallWebRTCRequestHandler,
 )
 
-
-async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
-    """Configura y ejecuta el bot de voz"""
-    print("Starting bot")
-
-    async with aiohttp.ClientSession() as session:
-        stt = create_stt_service()
-        tts = create_tts_service(session)
-        llm = create_llm_service()
-
-        # Configurar mensajes y contexto (system prompt y tools)
-        for tool in tools_list:
-            llm.register_direct_function(handler=tool, cancel_on_interruption=True)
-        messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-        context = LLMContext(
-            messages,
-            tools=tools_schema
-        )
-
-        # Configurar agregadores con estrategias de turn
-        user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-            context,
-            user_params=LLMUserAggregatorParams(
-                user_turn_strategies=UserTurnStrategies(
-                    stop=[
-                        TurnAnalyzerUserTurnStopStrategy(
-                            turn_analyzer=LocalSmartTurnAnalyzerV3()
-                        )
-                    ]
-                )
-            ),
-        )
-
-        pipeline = Pipeline([
-            transport.input(),
-            stt,
-            user_aggregator,
-            llm,
-            tts,
-            transport.output(),
-            assistant_aggregator,
-        ])
-
-        task = PipelineTask(
-            pipeline,
-            params=PipelineParams(
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
-            observers=[MetricsLogObserver()],
-            enable_turn_tracking=True,
-            idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        )
-
-        @transport.event_handler("on_client_connected")
-        async def on_client_connected(transport, client):
-            print("Client connected")
-            messages.append(
-                {"role": "system", "content": "Presentate brevemente al usuario."}
-            )
-            await task.queue_frames([LLMRunFrame()])
-
-        @transport.event_handler("on_client_disconnected")
-        async def on_client_disconnected(transport, client):
-            print("Client disconnected")
-            await task.cancel()
-
-        runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
-        await runner.run(task)
+from helpers.config import ICE_SERVERS
+from pipelines import _debug, run_bot
 
 
-async def bot(runner_args: RunnerArguments):
-    """Punto de entrada del bot"""
-    if hasattr(runner_args, "webrtc_connection") and runner_args.webrtc_connection:
-        from helpers.config import ICE_SERVERS
-        runner_args.webrtc_connection._ice_servers = ICE_SERVERS
-    transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args)
+# ─── WebRTC handler ───────────────────────────────────────────────────────────
 
+_handler: SmallWebRTCRequestHandler = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _handler
+    _handler = SmallWebRTCRequestHandler(
+        ice_servers=[IceServer(urls=ICE_SERVERS)]
+    )
+    yield
+    await _handler.close()
+
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/api/offer")
+async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
+    async def on_connection(connection: SmallWebRTCConnection):
+        background_tasks.add_task(run_bot, connection)
+
+    return await _handler.handle_web_request(
+        request=request,
+        webrtc_connection_callback=on_connection,
+    )
+
+
+@app.patch("/api/offer")
+async def ice_candidate(request: SmallWebRTCPatchRequest):
+    await _handler.handle_patch_request(request)
+    return {"status": "success"}
+
+
+@app.websocket("/ws/debug")
+async def debug_ws(websocket: WebSocket):
+    """Streams pipeline debug events (STT, LLM, TTS) to the frontend."""
+    await _debug.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep alive; client sends nothing
+    except WebSocketDisconnect:
+        _debug.disconnect(websocket)
+
+
+@app.get("/")
+async def serve_index():
+    return FileResponse("src/frontend/index.html")
+
+
+# ─── Entrypoint ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
-    main()
+    parser = argparse.ArgumentParser(description="Nova Voice Agent")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=7860)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)

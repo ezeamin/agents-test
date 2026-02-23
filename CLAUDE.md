@@ -22,10 +22,15 @@ Key design decisions:
 ├── .env.example                        # Template for all required environment variables
 │
 ├── src/
-│   ├── agent.py                        # Entry point: builds and runs the Pipecat pipeline
+│   ├── agent.py                        # Entry point: FastAPI server, WebRTC routes, debug WS
+│   ├── frontend/
+│   │   └── index.html                  # Debug browser client (WebRTC + mic mute + STT/LLM display)
+│   ├── pipelines/
+│   │   ├── __init__.py                 # Re-exports run_bot and _debug
+│   │   └── nova.py                     # Pipeline: DebugBroadcaster, DebugFrameCapture, run_bot
 │   └── helpers/
 │       ├── __init__.py                 # Re-exports all helpers for clean imports in agent.py
-│       ├── config.py                   # Transport params (Daily/WebRTC/Twilio) and SYSTEM_MESSAGE
+│       ├── config.py                   # ICE_SERVERS list and SYSTEM_MESSAGE
 │       ├── services.py                 # Factory functions: create_stt_service, create_tts_service, create_llm_service
 │       ├── tools.py                    # LLM tool definitions (functions + schema) for mock e-commerce actions
 │       ├── chatterbox_custom_integration.py      # Custom Pipecat TTSService for the Chatterbox server API
@@ -33,6 +38,7 @@ Key design decisions:
 │
 ├── scripts/
 │   ├── whisperlivekit_websocket.py     # Standalone test script: streams mic audio to the WhisperLiveKit server
+│   ├── pipecat-examples-webrtc-docker/ # Reference example from Pipecat docs (custom server+client pattern)
 │   └── piper/
 │       ├── Dockerfile                  # Container image for the Piper TTS HTTP server
 │       └── run_piper.py               # Entrypoint for the Piper TTS server (wraps piper.http_server)
@@ -44,30 +50,41 @@ Key design decisions:
 
 # Architecture
 
+The server is a custom **FastAPI** app (not the Pipecat runner). It creates a `SmallWebRTCRequestHandler` with ICE servers at startup, handles the WebRTC offer/answer exchange, and spawns an independent pipeline task per client. A `/ws/debug` WebSocket endpoint broadcasts STT, LLM, and TTS events to the debug frontend in real time.
+
 The pipeline follows a linear audio processing chain:
 
 ```
-User (Browser / Phone)
+User (Browser)
         │  audio in
         ▼
-   Transport (WebRTC / Daily / Twilio)
+   SmallWebRTCTransport  (ICE via STUN/TURN — see ICE Servers section)
         │
         ▼
    STT Service  ──────────────────────────────────────────────────────────────────┐
    (WhisperLiveKit WS | Whisper local | Deepgram)                                 │
-        │  transcribed text                                                        │
+        │  TranscriptionFrame                                                      │
+        ▼                                                                          │
+   [DebugFrameCapture]  → /ws/debug (STT events)                                  │
+        │                                                                          │
         ▼                                                                          │
    User Context Aggregator  (smart turn detection via LocalSmartTurnAnalyzerV3)   │
         │  complete user turn                                                      │
         ▼                                                                          │
    LLM Service  (AWS Bedrock — Claude Haiku 4.5)                                  │
-        │  text response / tool calls                                              │
+        │  TextFrame / tool calls                                                  │
+        ▼                                                                          │
+   [DebugFrameCapture]  → /ws/debug (LLM text events)                             │
+        │                                                                          │
         ▼                                                                          │
    TTS Service  ──────────────────────────────────────────────────────────────────┘
    (Chatterbox Server | Piper | AWS Polly | ElevenLabs)
         │  audio out
         ▼
-   Transport output  →  User
+   [DebugFrameCapture]  → /ws/debug (TTS start/stop events)
+        │
+        ▼
+   SmallWebRTCTransport output  →  User
 ```
 
 ### Services
@@ -86,11 +103,31 @@ User (Browser / Phone)
 
 ### Transport
 
-The transport layer (how audio enters and exits the pipeline) is configured in [src/helpers/config.py](src/helpers/config.py) and selected automatically by Pipecat's `create_transport` utility based on CLI arguments or runner configuration:
+The only active transport is **WebRTC via `SmallWebRTCTransport`**. The agent runs with `network_mode: host` in Docker so that `aiortc` binds directly to the host network interfaces — this is required for STUN to discover and advertise the correct public IP on EC2. With bridge networking, `aiortc` would bind to random ephemeral ports that Docker's port mapping doesn't cover.
 
-- **`webrtc`** — Browser-based, uses STUN/TURN ICE servers. The agent exposes port `7860` (HTTP for signaling) and `10000–10005/udp` (media).
-- **`daily`** — Daily.co room-based WebRTC.
-- **`twilio`** — FastAPI WebSocket for Twilio Media Streams.
+The signaling flow:
+- `POST /api/offer` — browser sends SDP offer, server returns SDP answer
+- `PATCH /api/offer` — trickle ICE candidate exchange
+- `GET /` — serves the debug frontend (`src/frontend/index.html`)
+- `GET /ws/debug` — WebSocket stream of STT/LLM/TTS debug events
+
+### ICE Servers
+
+ICE servers are configured in two places that **must both be set**:
+1. **Server-side** — `SmallWebRTCRequestHandler(ice_servers=[IceServer(urls=ICE_SERVERS)])` in `agent.py`. Controls what STUN/TURN the Pipecat server uses to discover its own public IP candidate.
+2. **Client-side** — `new RTCPeerConnection({ iceServers: [...] })` in `src/frontend/index.html`. Controls what STUN/TURN the browser uses.
+
+The `ICE_SERVERS` list is read from the `ICE_SERVERS` environment variable (comma-separated URLs), defaulting to two Google STUN servers.
+
+> **⚠️ Development only:** The current Google STUN configuration is sufficient for testing but not reliable for production. STUN only works when the network allows direct UDP. Symmetric NAT, firewalls, or enterprise networks will cause ICE to fail. **Production should use a TURN server**, which relays media through a known public endpoint regardless of NAT type.
+>
+> Managed TURN providers compatible with the `ICE_SERVERS` env var format (pass credentials as `turn:host?transport=udp` with `username`/`credential` in the URL or a separate `IceServer` object):
+> - **Twilio** — Network Traversal Service (NTS). Pipecat also has a native Twilio transport for telephony.
+> - **Daily** — Provides managed TURN. Pipecat also has a native Daily transport.
+> - **Telnyx** — Provides managed TURN. Pipecat also has a native Telnyx transport.
+> - **Metered.ca** — Free tier available, good for testing.
+> - **Cloudflare TURN** — In beta, generous free tier.
+> - **Coturn** — Self-hosted option, can run as a sidecar on the same EC2 instance.
 
 ### Tools (LLM Function Calling)
 
@@ -127,13 +164,13 @@ All configuration is done via `.env` (see `.env.example`):
 ```bash
 uv pip install -r requirements.txt
 cp .env.example .env  # fill in credentials
-uv run src/agent.py
+uv run src/agent.py   # serves on http://localhost:7860
 ```
 
-**Docker:**
+**Docker (EC2 — uses `network_mode: host`):**
 ```bash
-docker compose up nova-agent
-# To also run Piper TTS locally, uncomment the piper-server service in docker-compose.yml
+docker compose up --build nova-agent
+# Set EC2_HOST=localhost in .env when running on the same instance as STT/TTS servers
 ```
 
 **Test STT connection standalone:**
