@@ -6,7 +6,7 @@ from deepgram import LiveOptions
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.aws.llm import AWSBedrockLLMService
-from pipecat.services.aws.tts import PollyTTSService
+from pipecat.services.aws.tts import AWSPollyTTSService
 from pipecat.services.piper.tts import PiperTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 
@@ -78,7 +78,11 @@ def create_tts_service(session: aiohttp.ClientSession):
             aiohttp_session=session,
         )
     elif tts_service_provider == "POLLY":
-        return PollyTTSService(
+        return AWSPollyTTSService(
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", os.getenv("aws_access_key_id")),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", os.getenv("aws_secret_access_key")),
+            aws_session_token=os.getenv("AWS_SESSION_TOKEN", os.getenv("aws_session_token")),
+            region=os.getenv("AWS_DEFAULT_REGION", os.getenv("aws_default_region", "us-east-1")),
             voice="Lupe",
             speech_engine="generative",
             language="es-US"
