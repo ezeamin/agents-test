@@ -28,7 +28,11 @@
 #   HF_HOME         — HuggingFace cache dir (default: /app/hf_cache)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# TODO: Review CUDA version — 12.6 targets the current EC2 baseline.
+# Ubuntu 24.04 — Python 3.10 is managed by uv (not apt) to match the manual
+# setup steps in README.md and keep both containers on the same Ubuntu base.
+# uv downloads the Python 3.10 interpreter directly, no PPA or base-image
+# change needed.
+# TODO: Review CUDA version — 12.6.3 targets the current EC2 baseline.
 #       If the instance has a different driver, adjust the tag accordingly.
 FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
@@ -37,10 +41,6 @@ ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/hf_cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3.10-venv \
-    python3.10-dev \
-    python3-pip \
     git \
     curl \
     ca-certificates \
@@ -49,10 +49,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
+# Install uv — it manages the Python 3.10 interpreter download as well
 ADD https://astral.sh/uv/install.sh /uv-installer.sh
 RUN sh /uv-installer.sh && rm /uv-installer.sh
 ENV PATH="/root/.local/bin:$PATH"
+
+# Download Python 3.10 via uv (mirrors the manual `uv venv --python 3.10` step)
+RUN uv python install 3.10
 
 WORKDIR /build
 
@@ -61,7 +64,7 @@ WORKDIR /build
 # The venv is created explicitly so that the 4-alok server can reuse it.
 RUN git clone https://github.com/devnen/Chatterbox-TTS-Server.git devnen
 
-RUN uv venv --python python3.10 /opt/chatterbox-venv \
+RUN uv venv --python 3.10 /opt/chatterbox-venv \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
         --upgrade pip setuptools wheel \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
