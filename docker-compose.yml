@@ -1,4 +1,11 @@
 services:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Nova Agent (Pipecat voice pipeline)
+  # network_mode: host is required so that aiortc can bind directly to the
+  # host network interfaces for WebRTC ICE candidate discovery on EC2.
+  # With host networking the agent reaches the STT/TTS services via localhost.
+  # ──────────────────────────────────────────────────────────────────────────
   nova-agent:
     build: .
     container_name: strata_nova_agent
@@ -6,8 +13,91 @@ services:
     network_mode: host
     env_file:
       - .env
+    depends_on:
+      - stt-whisper
+      - tts-chatterbox
 
-  # Uncomment to use Piper TTS (set TTS_SERVICE_PROVIDER=PIPER in .env)
+  # ──────────────────────────────────────────────────────────────────────────
+  # Speech-to-Text Service (WhisperLiveKit)
+  # WebSocket endpoint: ws://localhost:8000/asr
+  # Protocol: raw 16kHz PCM (--pcm-input required by our Pipecat plugin)
+  # ──────────────────────────────────────────────────────────────────────────
+  stt-whisper:
+    build:
+      context: ./services/whisperlivekit
+    container_name: strata_stt
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Shared HuggingFace model cache — persists downloaded Whisper weights.
+      # On EC2: replace ./hf_cache with the absolute path of the partition
+      # dedicated to large model files (e.g. /data/hf_cache) so the instance
+      # doesn't run out of space on the root partition.
+      - ./hf_cache:/app/hf_cache
+      # GPU device access (required on some Linux hosts for compute)
+      - /dev/dri:/dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, utility, compute]
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/app/hf_cache
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # ONNX runtime path — required on Ubuntu 24.04
+      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/venv/lib/python3.12/site-packages/onnxruntime/capturable_lib
+      # Override default model size at runtime (tiny|base|small|medium|large)
+      - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_LANG=${WHISPER_LANG:-es}
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Text-to-Speech Service (Chatterbox — multilingual fork)
+  # HTTP endpoint: http://localhost:8004/tts
+  # Also supports OpenAI-compatible: http://localhost:8004/v1/audio/speech
+  # ──────────────────────────────────────────────────────────────────────────
+  tts-chatterbox:
+    build:
+      context: ./services/chatterbox
+    container_name: strata_tts
+    env_file: .env
+    ports:
+      - "8004:8004"
+    volumes:
+      # Same model cache as STT — both services pull from HuggingFace.
+      # Point to the same host partition as stt-whisper to share the cache.
+      - ./hf_cache:/app/hf_cache
+      # Voice reference audio files (.wav) for cloning / predefined voices.
+      # On EC2: replace ./voices with the path on the appropriate partition.
+      - ./voices:/app/voices
+      # Server output directory (generated audio files).
+      # On EC2: replace ./outputs with the path on the appropriate partition.
+      - ./outputs:/app/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/app/hf_cache
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Piper TTS (optional — uncomment to use local open-source TTS instead)
+  # Set TTS_SERVICE_PROVIDER=PIPER in .env to activate.
+  # Requires voice .onnx + config files in ./voice/
+  # ──────────────────────────────────────────────────────────────────────────
   # piper-server:
   #   build:
   #     context: ./scripts/piper
@@ -20,3 +110,9 @@ services:
   #     - CURRENT_VOICE_CONFIG=${CURRENT_VOICE_CONFIG}
   #   ports:
   #     - "5002:5002"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Named volumes not used — bind-mounts above give direct host path access.
+# For Kubernetes: replace bind-mounts with PersistentVolumeClaims (hf_cache,
+# voices, outputs) to survive pod restarts without re-downloading models.
+# ──────────────────────────────────────────────────────────────────────────────
