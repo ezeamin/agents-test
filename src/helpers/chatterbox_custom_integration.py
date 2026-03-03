@@ -87,7 +87,7 @@ class ChatterboxServerTTS(TTSService):
         except Exception as e:
             logger.warning(f"Could not fetch predefined voices: {e}, defaulting to 'predefined'")
 
-    async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
+    async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         voice = self._voice_id
         if not voice.lower().endswith(".wav"):
             voice = f"{voice}.wav"
@@ -126,12 +126,12 @@ class ChatterboxServerTTS(TTSService):
                     )
                     return
 
-                yield TTSStartedFrame()
+                yield TTSStartedFrame(context_id=context_id)
                 async for frame in self._stream_audio_frames_from_iterator(
                     resp.content.iter_any(), strip_wav_header=True
                 ):
                     yield frame
-                yield TTSStoppedFrame()
+                yield TTSStoppedFrame(context_id=context_id)
         except Exception as e:
             logger.error(f"Chatterbox /tts error: {e}")
             yield ErrorFrame(error=f"Chatterbox /tts error: {e}")
