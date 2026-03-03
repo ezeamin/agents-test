@@ -45,6 +45,15 @@ RUN if [ "$RUNTIME" = "nvidia" ]; then \
       torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 ; \
     fi
 
+# Install peft to satisfy diffusers' LoRACompatibleLinear backend requirement
+# (suppresses FutureWarning from diffusers/models/lora.py)
+RUN pip3 install --no-cache-dir peft
+
+# Suppress upstream FutureWarnings from transformers/torch that cannot be fixed
+# without patching the cloned chatterbox server code or upgrading its deps.
+# Format: ignore::<Category>:<module_prefix>, UNCOMMENT IN PRODUCTION IF THIS WASN'T FIXED
+# ENV PYTHONWARNINGS="ignore::FutureWarning:diffusers,ignore::FutureWarning:transformers,ignore::UserWarning:transformers"
+
 # Create required directories for the application
 RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
