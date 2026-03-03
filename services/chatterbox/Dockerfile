@@ -81,7 +81,14 @@ RUN uv venv --python 3.10 /opt/chatterbox-venv \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
         -r devnen/requirements-nvidia.txt \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
-        "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@master"
+        "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@master" \
+    && uv pip install --python /opt/chatterbox-venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cu121 \
+        torch torchvision torchaudio
+# ^ Installing chatterbox from git may upgrade/downgrade torch without touching
+# torchvision, causing a "operator torchvision::nms does not exist" crash at import.
+# Re-pinning all three together from the cu121 index (matching torch.version.cuda='12.1'
+# from the manual EC2 setup) guarantees they are from the same build and are compatible.
 
 # ── Step 2: Clone the multilingual server code (4-alok fork) ─────────────────
 # TODO: The 4-alok fork was originally developed on macOS and may contain
