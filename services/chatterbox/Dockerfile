@@ -25,13 +25,12 @@
 #   XDG_CACHE_HOME  — catch-all for XDG-compliant caches (default: /app/cache)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Ubuntu 24.04 — Python 3.10 is managed by uv (not apt) to match the manual
-# setup steps in README.md and keep both containers on the same Ubuntu base.
-# uv downloads the Python 3.10 interpreter directly, no PPA or base-image
-# change needed.
+# Ubuntu 22.04 matches the official Chatterbox server Dockerfile and is the
+# platform for which the resemble-perth wheels are built. Using 24.04 caused
+# perth's C extension to load as NoneType silently, crashing ChatterboxMultilingualTTS.
 # TODO: Review CUDA version — 12.6.3 targets the current EC2 baseline.
 #       If the instance has a different driver, adjust the tag accordingly.
-FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -70,18 +69,19 @@ WORKDIR /build
 # The venv is created explicitly so that the 4-alok server can reuse it.
 RUN git clone https://github.com/devnen/Chatterbox-TTS-Server.git devnen
 
-# resemble-perth is a ResembleAI watermarking package required by
-# ChatterboxMultilingualTTS.from_pretrained() but absent from devnen's
-# requirements-nvidia.txt (devnen is English-only and never loads the
-# multilingual model). We install it explicitly to prevent a
-# "TypeError: 'NoneType' object is not callable" crash at startup.
+# Install devnen's deps first (provides torch for the correct CUDA version and
+# all server utilities). Then upgrade chatterbox-tts to the ResembleAI git master —
+# this is the same source used in the official Chatterbox Dockerfile's requirements.
+# The git version declares resemble-perth as a proper dependency so uv resolves the
+# compatible version automatically, rather than us installing it in isolation (which
+# installs the package but leaves its C extension silently broken).
 RUN uv venv --python 3.10 /opt/chatterbox-venv \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
         --upgrade pip setuptools wheel \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
         -r devnen/requirements-nvidia.txt \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
-        resemble-perth
+        "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@master"
 
 # ── Step 2: Clone the multilingual server code (4-alok fork) ─────────────────
 # TODO: The 4-alok fork was originally developed on macOS and may contain
