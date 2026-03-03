@@ -10,10 +10,16 @@
 # Base image: Ubuntu 24.04 (matches the LD_LIBRARY_PATH for ONNX noted in
 # the original server_dockerization/docker-compose.yaml).
 #
+# Volumes expected at runtime:
+#   /app/cache  — unified cache dir (bind-mount to the appropriate EC2 partition).
+#                 /root/.cache is symlinked here so ALL libraries that write to
+#                 ~/.cache (HuggingFace, torch, pip, etc.) end up in this volume.
+#
 # Runtime tunables (env vars, no rebuild needed):
 #   WHISPER_MODEL   — tiny | base | small | medium | large (default: medium)
 #   WHISPER_LANG    — language code passed to --language (default: es)
-#   HF_HOME         — HuggingFace cache dir (default: /app/hf_cache)
+#   HF_HOME         — HuggingFace cache dir (default: /app/cache/huggingface)
+#   XDG_CACHE_HOME  — catch-all for XDG-compliant caches (default: /app/cache)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # TODO: Review CUDA version — 12.6.3 targets the current EC2 baseline.
@@ -22,7 +28,11 @@ FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/app/hf_cache
+
+# Unified cache volume — all libraries that write to ~/.cache are redirected here
+# via the /root/.cache symlink created below.
+ENV HF_HOME=/app/cache/huggingface
+ENV XDG_CACHE_HOME=/app/cache
 
 # Runtime defaults — override via env vars at docker run / compose time
 ENV WHISPER_MODEL=medium
@@ -56,16 +66,15 @@ ENV PATH="/opt/whisper-venv/bin:$PATH"
 
 # ONNX runtime library path — required on Ubuntu 24.04.
 # Points to /opt/whisper-venv where onnxruntime is installed as a transitive
-# dependency of whisperlivekit (not the old /opt/venv placeholder).
+# dependency of whisperlivekit.
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/whisper-venv/lib/python3.12/site-packages/onnxruntime/capturable_lib
 
 WORKDIR /app
 
-# /app/hf_cache is expected to be bind-mounted from the host so that model
-# weights survive container restarts and are not re-downloaded on each start.
-# On EC2, point the host-side path at the partition dedicated to large files
-# (set in docker-compose.yml or docker run -v <partition-path>:/app/hf_cache).
-RUN mkdir -p /app/hf_cache
+# Create the unified cache dir and symlink /root/.cache to it.
+# At runtime the bind-mount replaces /app/cache with the host partition, so
+# everything written to ~/.cache at runtime lands in the mounted volume.
+RUN mkdir -p /app/cache && ln -sfn /app/cache /root/.cache
 
 EXPOSE 8000
 

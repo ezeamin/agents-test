@@ -16,16 +16,13 @@
 # GPU: NVIDIA CUDA required for TTS inference.
 #
 # Volumes expected at runtime:
-#   /app/hf_cache   — HuggingFace model cache (bind-mount to persist downloads)
-#   /app/voices     — Voice reference audio files (.wav) for cloning / predefined
-#   /app/outputs    — Server output directory
-#
-# On EC2, point each host-side bind-mount at the partition dedicated to that
-# type of data (large model files → storage partition, outputs → scratch, etc.).
-# See docker-compose.yml for the mount configuration.
+#   /app/cache  — unified cache dir (bind-mount to the appropriate EC2 partition).
+#                 /root/.cache is symlinked here so ALL libraries that write to
+#                 ~/.cache (HuggingFace, torch, pip, etc.) end up in this volume.
 #
 # Runtime tunables (env vars):
-#   HF_HOME         — HuggingFace cache dir (default: /app/hf_cache)
+#   HF_HOME         — HuggingFace cache dir (default: /app/cache/huggingface)
+#   XDG_CACHE_HOME  — catch-all for XDG-compliant caches (default: /app/cache)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Ubuntu 24.04 — Python 3.10 is managed by uv (not apt) to match the manual
@@ -38,7 +35,11 @@ FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/app/hf_cache
+
+# Unified cache volume — all libraries that write to ~/.cache are redirected here
+# via the /root/.cache symlink created below.
+ENV HF_HOME=/app/cache/huggingface
+ENV XDG_CACHE_HOME=/app/cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -57,6 +58,11 @@ ENV PATH="/root/.local/bin:$PATH"
 # Download Python 3.10 via uv (mirrors the manual `uv venv --python 3.10` step)
 RUN uv python install 3.10
 
+# Create the unified cache dir and symlink /root/.cache to it.
+# At runtime the bind-mount replaces /app/cache with the host partition, so
+# everything written to ~/.cache at runtime lands in the mounted volume.
+RUN mkdir -p /app/cache && ln -sfn /app/cache /root/.cache
+
 WORKDIR /build
 
 # ── Step 1: Clone devnen repo and install its dependencies ───────────────────
@@ -64,11 +70,18 @@ WORKDIR /build
 # The venv is created explicitly so that the 4-alok server can reuse it.
 RUN git clone https://github.com/devnen/Chatterbox-TTS-Server.git devnen
 
+# resemble-perth is a ResembleAI watermarking package required by
+# ChatterboxMultilingualTTS.from_pretrained() but absent from devnen's
+# requirements-nvidia.txt (devnen is English-only and never loads the
+# multilingual model). We install it explicitly to prevent a
+# "TypeError: 'NoneType' object is not callable" crash at startup.
 RUN uv venv --python 3.10 /opt/chatterbox-venv \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
         --upgrade pip setuptools wheel \
     && uv pip install --python /opt/chatterbox-venv/bin/python \
-        -r devnen/requirements-nvidia.txt
+        -r devnen/requirements-nvidia.txt \
+    && uv pip install --python /opt/chatterbox-venv/bin/python \
+        resemble-perth
 
 # ── Step 2: Clone the multilingual server code (4-alok fork) ─────────────────
 # TODO: The 4-alok fork was originally developed on macOS and may contain
@@ -83,20 +96,11 @@ RUN git clone https://github.com/4-alok/Chatterbox-TTS-Server.git multilingual
 # The 4-alok fork's config.yaml contains Mac-specific defaults and path
 # assumptions that break on Linux. We ship a patched version of config.yaml
 # alongside this Dockerfile (in services/chatterbox/) that fixes those issues
-# and routes all storage paths to the bind-mounted volumes (/app/*).
+# and routes storage paths to the bind-mounted cache volume (/app/cache/*).
 # This avoids maintaining a separate fork just for a config change.
 COPY config.yaml /build/multilingual/config.yaml
 
 WORKDIR /build/multilingual
-
-RUN mkdir -p /app/hf_cache /app/voices /app/outputs
-
-# Symlink the runtime directories into the server's expected relative locations.
-# These are a fallback for any code paths that reference ./voices or ./outputs
-# relative to the working directory rather than reading from config.yaml.
-# If config.yaml already points to /app/* directly, these are harmless.
-RUN ln -sfn /app/voices /build/multilingual/voices \
-    && ln -sfn /app/outputs /build/multilingual/outputs
 
 EXPOSE 8004
 

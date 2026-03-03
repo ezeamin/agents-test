@@ -34,7 +34,7 @@ tts_engine:
   reference_audio_path: reference_audio
   default_voice_id: default_sample.wav
 paths:
-  model_cache: model_cache
+  model_cache: /app/cache/chatterbox
   output: outputs
 generation_defaults:
   temperature: 0.8

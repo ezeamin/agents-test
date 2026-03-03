@@ -30,11 +30,13 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Shared HuggingFace model cache — persists downloaded Whisper weights.
-      # On EC2: replace ./hf_cache with the absolute path of the partition
-      # dedicated to large model files (e.g. /data/hf_cache) so the instance
-      # doesn't run out of space on the root partition.
-      - ./hf_cache:/app/hf_cache
+      # Unified cache for all runtime downloads (HuggingFace models, torch, etc.)
+      # /root/.cache inside the container is symlinked to /app/cache so every
+      # library that writes to ~/.cache ends up here regardless of which env var
+      # it respects (HF_HOME, XDG_CACHE_HOME, or the raw ~/.cache path).
+      # On EC2: replace ./cache with the absolute path of the partition dedicated
+      # to large model files so the root partition doesn't fill up.
+      - ./cache:/app/cache
       # GPU device access (required on some Linux hosts for compute)
       - /dev/dri:/dev/dri
     deploy:
@@ -46,12 +48,8 @@ services:
               capabilities: [gpu, utility, compute]
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - HF_HOME=/app/hf_cache
-      - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      # ONNX runtime path — required on Ubuntu 24.04
-      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/venv/lib/python3.12/site-packages/onnxruntime/capturable_lib
       # Override default model size at runtime (tiny|base|small|medium|large)
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
       - WHISPER_LANG=${WHISPER_LANG:-es}
@@ -70,15 +68,12 @@ services:
     ports:
       - "8004:8004"
     volumes:
-      # Same model cache as STT — both services pull from HuggingFace.
-      # Point to the same host partition as stt-whisper to share the cache.
-      - ./hf_cache:/app/hf_cache
-      # Voice reference audio files (.wav) for cloning / predefined voices.
-      # On EC2: replace ./voices with the path on the appropriate partition.
-      - ./voices:/app/voices
-      # Server output directory (generated audio files).
-      # On EC2: replace ./outputs with the path on the appropriate partition.
-      - ./outputs:/app/outputs
+      # Unified cache shared with stt-whisper — both pull HuggingFace models.
+      # Same bind-mount path so they share downloads on the same host partition.
+      # Voices are NOT mounted here: they come bundled with the repo clone inside
+      # the image (git clone includes the voices/ directory). To add custom voices
+      # after deploy, use: docker cp ./my-voice.wav strata_tts:/build/multilingual/voices/
+      - ./cache:/app/cache
     deploy:
       resources:
         reservations:
@@ -88,9 +83,6 @@ services:
               capabilities: [gpu]
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - HF_HOME=/app/hf_cache
-      - PYTHONDONTWRITEBYTECODE=1
-      - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -113,6 +105,6 @@ services:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Named volumes not used — bind-mounts above give direct host path access.
-# For Kubernetes: replace bind-mounts with PersistentVolumeClaims (hf_cache,
-# voices, outputs) to survive pod restarts without re-downloading models.
+# For Kubernetes: replace ./cache bind-mounts with a single PersistentVolumeClaim
+# shared between stt and tts pods to avoid re-downloading models on pod restart.
 # ──────────────────────────────────────────────────────────────────────────────
