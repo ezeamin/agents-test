@@ -38,8 +38,8 @@ class ChatterboxServerTTS(TTSService):
         base_url: str,
         voice: str = "Elena.wav",
         language: str = "es",
-        temperature: float = 0.8,
-        exaggeration: float = 1.3,
+        temperature: float = 0.1,
+        exaggeration: float = 0.5,
         cfg_weight: float = 0.5,
         speed_factor: float = 1.0,
         seed: Optional[int] = 1775,
@@ -58,7 +58,7 @@ class ChatterboxServerTTS(TTSService):
         self._seed = seed
         self._chunk_size = chunk_size
         self._voice_mode = "predefined"
-        self.set_voice(voice)
+        self._voice_id = voice
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
@@ -103,7 +103,7 @@ class ChatterboxServerTTS(TTSService):
             "temperature": self._temperature,
             "exaggeration": self._exaggeration,
             "cfg_weight": self._cfg_weight,
-            "speed_factor": self._speed_factor,
+            "speed_factor": self._speed_factor
         }
 
         if voice_mode == "clone":
