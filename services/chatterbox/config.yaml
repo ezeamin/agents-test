@@ -1,0 +1,71 @@
+# Patched config for the 4-alok/Chatterbox-TTS-Server multilingual fork.
+#
+# This file replaces the fork's default config.yaml at build time (see COPY
+# step in services/chatterbox/Dockerfile). It exists here rather than in a
+# separate repo fork so the changes are visible alongside the Dockerfile and
+# easier to maintain.
+#
+# Changes from the upstream 4-alok defaults:
+#   - TODO: fill in your changes from the local fork review here
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILL IN THE ACTUAL CONFIG BELOW
+# Copy the upstream config.yaml from the 4-alok fork as a base and apply
+# the changes you had locally. Key paths to update for Linux / Docker:
+#   - Any path pointing to ~/Library, /Users/, or macOS-specific locations
+#     should be replaced with /app/hf_cache, /app/voices, /app/outputs
+# ─────────────────────────────────────────────────────────────────────────────
+server:
+  host: 0.0.0.0
+  port: 8004
+  use_ngrok: false
+  use_auth: false
+  auth_username: user
+  auth_password: password
+  log_file_path: logs/tts_server.log
+  log_file_max_size_mb: 10
+  log_file_backup_count: 5
+model:
+  repo_id: ResembleAI/chatterbox
+  use_multilingual: true
+tts_engine:
+  device: cuda
+  predefined_voices_path: voices
+  reference_audio_path: reference_audio
+  default_voice_id: default_sample.wav
+paths:
+  model_cache: /app/cache/chatterbox
+  output: outputs
+generation_defaults:
+  temperature: 0.8
+  exaggeration: 0.5
+  cfg_weight: 0.5
+  seed: 2024
+  speed_factor: 1
+  language: es
+audio_output:
+  format: wav
+  sample_rate: 24000
+  max_reference_duration_sec: 3600
+ui_state:
+  last_text: "\xA1Hola! Soy tu asistente de voz argentino y estoy ac\xE1 para ayudarte\
+    \ con tus compras. Tenemos ofertas incre\xEDbles, especialmente nuestro famoso\
+    \ turr\xF3n por dos pesos que est\xE1 volando de los estantes. \xBFEn qu\xE9 puedo\
+    \ ayudarte hoy? Puedo buscarte productos, verificar disponibilidad, agregar art\xED\
+    culos a tu carrito o aplicar promociones especiales. \xBFQu\xE9 te gustar\xED\
+    a hacer?"
+  last_voice_mode: clone
+  last_predefined_voice: none
+  last_reference_file: Robert.wav
+  last_seed: 2024
+  last_chunk_size: 250
+  last_split_text_enabled: true
+  hide_chunk_warning: false
+  hide_generation_warning: true
+  theme: dark
+ui:
+  title: Chatterbox TTS Server
+  show_language_select: true
+  max_predefined_voices_in_dropdown: 20
+debug:
+  save_intermediate_audio: false

@@ -1,13 +1,113 @@
 services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Nova Agent (Pipecat voice pipeline)
+  # network_mode: host is required so that aiortc can bind directly to the
+  # host network interfaces for WebRTC ICE candidate discovery on EC2.
+  # With host networking the agent reaches the STT/TTS services via localhost.
+  # ──────────────────────────────────────────────────────────────────────────
   nova-agent:
-    build: .
+    build:
+      context: .
+      args:
+        # Vite bakes these into the JS bundle at build time.
+        # Values are read from the .env file (or host environment).
+        VITE_COGNITO_DOMAIN: ${VITE_COGNITO_DOMAIN}
+        VITE_COGNITO_CLIENT_ID: ${VITE_COGNITO_CLIENT_ID}
+        VITE_COGNITO_REDIRECT_URI: ${VITE_COGNITO_REDIRECT_URI}
+        VITE_COGNITO_LOGOUT_URI: ${VITE_COGNITO_LOGOUT_URI}
+        VITE_ICE_SERVERS: ${VITE_ICE_SERVERS:-stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302}
     container_name: strata_nova_agent
     command: uv run src/agent.py --host 0.0.0.0
     network_mode: host
     env_file:
       - .env
+    depends_on:
+      - stt-whisper
+      - tts-chatterbox
 
-  # Uncomment to use Piper TTS (set TTS_SERVICE_PROVIDER=PIPER in .env)
+  # ──────────────────────────────────────────────────────────────────────────
+  # Speech-to-Text Service (WhisperLiveKit)
+  # WebSocket endpoint: ws://localhost:8000/asr
+  # Protocol: raw 16kHz PCM (--pcm-input required by our Pipecat plugin)
+  # ──────────────────────────────────────────────────────────────────────────
+  stt-whisper:
+    image: {STT_WHISPER_IMAGE:-}
+    build:
+      context: ./services/whisperlivekit
+    container_name: strata_stt
+    env_file: .env
+    ports:
+      - '8000:8000'
+    volumes:
+      # Unified cache for all runtime downloads (HuggingFace models, torch, etc.)
+      # /root/.cache inside the container is symlinked to /app/cache so every
+      # library that writes to ~/.cache ends up here regardless of which env var
+      # it respects (HF_HOME, XDG_CACHE_HOME, or the raw ~/.cache path).
+      # On EC2: replace ./cache with the absolute path of the partition dedicated
+      # to large model files so the root partition doesn't fill up.
+      - ./cache:/app/cache
+      # GPU device access (required on some Linux hosts for compute)
+      - /dev/dri:/dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, utility, compute]
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # Override default model size at runtime (tiny|base|small|medium|large)
+      - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_LANG=${WHISPER_LANG:-es}
+    restart: unless-stopped
+    profiles: ["gpu-stt", "gpu-all"]
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Text-to-Speech Service (Chatterbox — multilingual fork)
+  # HTTP endpoint: http://localhost:8004/tts
+  # Also supports OpenAI-compatible: http://localhost:8004/v1/audio/speech
+  # ──────────────────────────────────────────────────────────────────────────
+  tts-chatterbox:
+    image: {TTS_CHATTERBOX_IMAGE:-}
+    build:
+      context: ./services/chatterbox
+    container_name: strata_tts
+    env_file: .env
+    ports:
+      - '8004:8004'
+    volumes:
+      # Unified cache shared with stt-whisper — both pull HuggingFace models.
+      # Same bind-mount path so they share downloads on the same host partition.
+      # Voices bundled inside the image via git clone. To add custom voices
+      # after deploy, use: docker cp ./my-voice.wav strata_tts:/app/voices/
+      - ./cache:/app/cache
+      - ./cache/huggingface:/app/hf_cache
+      - ./outputs:/app/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/app/hf_cache
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    profiles: ["gpu-tts", "gpu-all"]
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Piper TTS (optional — uncomment to use local open-source TTS instead)
+  # Set TTS_SERVICE_PROVIDER=PIPER in .env to activate.
+  # Requires voice .onnx + config files in ./voice/
+  # ──────────────────────────────────────────────────────────────────────────
   # piper-server:
   #   build:
   #     context: ./scripts/piper
@@ -20,3 +120,9 @@ services:
   #     - CURRENT_VOICE_CONFIG=${CURRENT_VOICE_CONFIG}
   #   ports:
   #     - "5002:5002"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Named volumes not used — bind-mounts above give direct host path access.
+# For Kubernetes: replace ./cache bind-mounts with a single PersistentVolumeClaim
+# shared between stt and tts pods to avoid re-downloading models on pod restart.
+# ──────────────────────────────────────────────────────────────────────────────

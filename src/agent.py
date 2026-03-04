@@ -1,10 +1,12 @@
 """HTTP / WebRTC server — Nova Voice Agent"""
 import argparse
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest,
@@ -66,7 +68,20 @@ async def debug_ws(websocket: WebSocket):
 
 @app.get("/")
 async def serve_index():
-    return FileResponse("src/frontend/index.html")
+    """
+    Serves the React SPA entry point.
+    In production the compiled dist/ is baked into the image.
+    In local dev, run `bun dev` in src/frontend/ instead.
+    """
+    return FileResponse("src/frontend/dist/index.html")
+
+
+# SPA catch-all: serve index.html for any path that is not an API/WS route
+# so that react-router-dom can handle client-side navigation (/login, /callback…).
+# Must be mounted AFTER all explicit routes so API routes keep priority.
+_DIST_DIR = "src/frontend/dist"
+if os.path.isdir(_DIST_DIR):
+    app.mount("/", StaticFiles(directory=_DIST_DIR, html=True), name="frontend")
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
