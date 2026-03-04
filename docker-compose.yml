@@ -23,8 +23,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - stt-whisper
-      - tts-chatterbox
+      stt-whisper:
+        condition: service_started
+        required: false   # optional — not started when using cloud STT/TTS APIs
+      tts-chatterbox:
+        condition: service_started
+        required: false   # optional — not started when using cloud STT/TTS APIs
 
   # ──────────────────────────────────────────────────────────────────────────
   # Speech-to-Text Service (WhisperLiveKit)
