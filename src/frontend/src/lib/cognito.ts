@@ -47,7 +47,7 @@ export async function buildLoginUrl(): Promise<string> {
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     response_type: 'code',
-    scope: 'openid email profile',
+    scope: 'openid email',
     redirect_uri: REDIRECT_URI,
     code_challenge: challenge,
     code_challenge_method: 'S256',

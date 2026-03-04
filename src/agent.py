@@ -66,22 +66,25 @@ async def debug_ws(websocket: WebSocket):
         _debug.disconnect(websocket)
 
 
-@app.get("/")
-async def serve_index():
-    """
-    Serves the React SPA entry point.
-    In production the compiled dist/ is baked into the image.
-    In local dev, run `bun dev` in src/frontend/ instead.
-    """
-    return FileResponse("src/frontend/dist/index.html")
+# ─── Static files + SPA fallback ──────────────────────────────────────────────
 
-
-# SPA catch-all: serve index.html for any path that is not an API/WS route
-# so that react-router-dom can handle client-side navigation (/login, /callback…).
-# Must be mounted AFTER all explicit routes so API routes keep priority.
 _DIST_DIR = "src/frontend/dist"
-if os.path.isdir(_DIST_DIR):
-    app.mount("/", StaticFiles(directory=_DIST_DIR, html=True), name="frontend")
+
+# Serve Vite's hashed assets (JS, CSS, images) under /assets.
+# Must be registered before the catch-all so these paths resolve to real files.
+if os.path.isdir(f"{_DIST_DIR}/assets"):
+    app.mount("/assets", StaticFiles(directory=f"{_DIST_DIR}/assets"), name="assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str) -> FileResponse:
+    """
+    SPA catch-all: any path that didn't match an API or WebSocket route
+    returns index.html so react-router-dom handles client-side navigation
+    (/login, /callback, etc.).
+    In local dev, run `bun dev` in src/frontend/ and use its proxy instead.
+    """
+    return FileResponse(f"{_DIST_DIR}/index.html")
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
