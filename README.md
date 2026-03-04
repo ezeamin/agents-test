@@ -41,13 +41,19 @@ pipelines/nova.py
 │       ├── tools.py          # Tool definitions para el LLM
 │       ├── whisper_livekit_custom_integration.py   # Plugin STT: WhisperLiveKit streaming
 │       └── chatterbox_custom_integration.py        # Plugin TTS: Chatterbox Server
+├── services/
+│   ├── chatterbox/
+│   │   ├── Dockerfile        # Imagen Docker para Chatterbox TTS
+│   │   └── config.yaml       # Config patched para Linux/Docker (paths, GPU, español)
+│   └── whisperlivekit/
+│       └── Dockerfile        # Imagen Docker para WhisperLiveKit STT
 ├── scripts/
 │   ├── piper/
 │   │   ├── Dockerfile        # Imagen Docker para Piper TTS
 │   │   └── run_piper.py      # Launcher del servidor Piper
 │   └── whisperlivekit_websocket.py  # Script de test para WebSocket STT
-├── Dockerfile                # Imagen Docker del agente
-├── docker-compose.yml        # network_mode: host (necesario para WebRTC en EC2)
+├── Dockerfile                # Imagen Docker del agente Nova
+├── docker-compose.yml        # nova-agent + stt-whisper + tts-chatterbox (network_mode: host para WebRTC)
 ├── requirements.txt
 └── .env.example
 ```
@@ -95,7 +101,7 @@ uv run src/agent.py   # http://localhost:7860
 
 ### Docker (EC2)
 
-El agente usa `network_mode: host` para que `aiortc` pueda enlazarse directamente a las interfaces del host. Esto es necesario para que STUN descubra la IP pública correcta en EC2. Con `EC2_HOST=localhost` en `.env`:
+El stack completo (agente + STT + TTS) se levanta con un solo comando. El agente usa `network_mode: host` para que `aiortc` pueda enlazarse directamente a las interfaces del host, necesario para que STUN descubra la IP pública correcta en EC2. Con `EC2_HOST=localhost` en `.env` los tres servicios se comunican via `localhost`:
 
 ```bash
 docker compose up --build
@@ -131,15 +137,30 @@ STT en streaming via WebSocket. Transcribe audio mientras el usuario habla sin e
 
 #### Despliegue del servidor WhisperLiveKit
 
+**Docker (recomendado):**
+
+```bash
+docker compose up --build stt-whisper
+```
+
+El modelo y el idioma se configuran via variables de entorno en `.env`:
+
+```
+WHISPER_MODEL=medium   # tiny | base | small | medium | large
+WHISPER_LANG=es
+```
+
+**Manual:**
+
 ```bash
 sudo apt update
 sudo apt install python3 python3-venv python3-pip ffmpeg portaudio19-dev python3-dev -y
 uv venv && source .venv/bin/activate
 uv pip install whisperlivekit pyaudio
-wlk --model tiny --host 0.0.0.0 --port 8000 --pcm-input --language es
+wlk --model medium --host 0.0.0.0 --port 8000 --pcm-input --language es
 ```
 
-Modelos disponibles: `tiny`, `base`, `small`, `medium`, `large`. El parámetro `--pcm-input` es requerido por la integración de Pipecat.
+El parámetro `--pcm-input` es requerido por la integración de Pipecat.
 
 ### Deepgram
 
@@ -159,28 +180,37 @@ TTS via servidor Chatterbox con soporte para voces predefinidas y clonadas. Dete
 
 #### Despliegue del servidor Chatterbox
 
-Utiliza [Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server). Requiere Python 3.10 (hay conflictos de dependencias con 3.12):
+Utiliza [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server).
+
+**Docker (recomendado):**
+
+```bash
+docker compose up --build tts-chatterbox
+```
+
+El container clona el repositorio en el build, aplica nuestro `config.yaml` patched (ver `services/chatterbox/`) y arranca el servidor en el puerto 8004. Los modelos se cachean en el volumen `./cache` para no re-descargarlos en cada reinicio.
+
+**Manual:**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/devnen/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 uv venv --python 3.10 && source .venv/bin/activate
-uv pip install --upgrade pip whl setuptools
+uv pip install --upgrade pip setuptools wheel
 uv pip install -r requirements-nvidia.txt
 uv run server.py
 ```
 
-**Nota multilingüe:** Al momento de escribir esto el servidor solo implementa voces en inglés. Para español usar [el fork con soporte multilingüe](https://github.com/4-alok/Chatterbox-TTS-Server), instalando requirements desde el repo original:
-
-```bash
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server && uv venv && source .venv/bin/activate
-pip install -r requirements.txt && cd ..
-git clone https://github.com/4-alok/Chatterbox-TTS-Server.git Chatterbox-TTS-Server-ML
-cd Chatterbox-TTS-Server-ML
-uv run --active server.py
-```
+> **Nota multilingüe:** Si se necesita soporte para español y el servidor solo genera voz en inglés, el fork [4-alok/Chatterbox-TTS-Server](https://github.com/4-alok/Chatterbox-TTS-Server) añade soporte multilingüe. Sus dependencias están desactualizadas, por lo que hay que instalar los requirements del repo de devnen y correr el server del fork:
+> ```bash
+> git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+> cd Chatterbox-TTS-Server && uv venv && source .venv/bin/activate
+> pip install -r requirements.txt && cd ..
+> git clone https://github.com/4-alok/Chatterbox-TTS-Server.git Chatterbox-TTS-Server-ML
+> cd Chatterbox-TTS-Server-ML && uv run --active server.py
+> ```
+> Ver también `services/chatterbox/prev.Dockerfile` para la versión containerizada de este enfoque.
 
 ### AWS Polly
 

@@ -6,7 +6,7 @@ The agent supports swappable backends for each stage of the voice pipeline (STT,
 
 Key design decisions:
 - All service providers (STT, TTS) are selected at startup via `.env` variables — no code changes required to switch providers.
-- External STT and TTS servers (WhisperLiveKit, Chatterbox) are expected to be running separately, typically on an EC2 instance.
+- The STT (WhisperLiveKit) and TTS (Chatterbox) servers are containerized in `services/` and managed via docker-compose alongside the agent. They can also be run manually on the same or a separate instance.
 - The LLM is always AWS Bedrock (Claude Haiku 4.5).
 - Smart turn detection uses Pipecat's `LocalSmartTurnAnalyzerV3` with Silero VAD to determine when the user has finished speaking.
 
@@ -17,7 +17,7 @@ Key design decisions:
 ```
 .
 ├── Dockerfile                          # Container image for the main agent
-├── docker-compose.yml                  # Compose file: agent + optional Piper TTS service
+├── docker-compose.yml                  # Compose file: nova-agent + stt-whisper + tts-chatterbox (+ optional Piper)
 ├── requirements.txt                    # Python dependencies (pipecat extras, boto3, etc.)
 ├── .env.example                        # Template for all required environment variables
 │
@@ -35,6 +35,14 @@ Key design decisions:
 │       ├── tools.py                    # LLM tool definitions (functions + schema) for mock e-commerce actions
 │       ├── chatterbox_custom_integration.py      # Custom Pipecat TTSService for the Chatterbox server API
 │       └── whisper_livekit_custom_integration.py # Custom Pipecat STTService for WhisperLiveKit WebSocket API
+│
+├── services/
+│   ├── chatterbox/
+│   │   ├── Dockerfile                  # Container image for Chatterbox TTS (clones devnen/Chatterbox-TTS-Server)
+│   │   ├── config.yaml                 # Patched config: Linux/Docker paths, GPU device, Spanish language defaults
+│   │   └── prev.Dockerfile             # Previous two-repo multilingual build (kept for reference)
+│   └── whisperlivekit/
+│       └── Dockerfile                  # Container image for WhisperLiveKit STT server
 │
 ├── scripts/
 │   ├── whisperlivekit_websocket.py     # Standalone test script: streams mic audio to the WhisperLiveKit server
@@ -167,10 +175,10 @@ cp .env.example .env  # fill in credentials
 uv run src/agent.py   # serves on http://localhost:7860
 ```
 
-**Docker (EC2 — uses `network_mode: host`):**
+**Docker (EC2 — uses `network_mode: host` for nova-agent):**
 ```bash
-docker compose up --build nova-agent
-# Set EC2_HOST=localhost in .env when running on the same instance as STT/TTS servers
+docker compose up --build        # starts nova-agent + stt-whisper + tts-chatterbox
+# Set EC2_HOST=localhost in .env — all three services run on the same host
 ```
 
 **Test STT connection standalone:**
@@ -182,17 +190,15 @@ python scripts/whisperlivekit_websocket.py
 
 ## Current Status
 
-The pipecat server is deployed using the current docker-compose in an EC2 instance that is exposed publicly with an HTTPS connection using Load Balancers, Target Groups, etc.
-
-Although it is changed for some tests, the implementation we are putting the most focus on is using our managed-services for TTS and STT with Chatterbox and WhisperLivekit. This two servers are deployed on the same instance but manually (following the scripts showcased above).
+All three services (nova-agent, stt-whisper, tts-chatterbox) are containerized and managed together via docker-compose. The stack is deployed on an EC2 instance exposed publicly via HTTPS using Load Balancers and Target Groups.
 
 ## Future Status
 
 This are some of the task we will tackle to improve the current implementation. Those that are tagged with \[OTHERS\] will be implemented by other people in the team, and those tagged with \[BLOCKED\] are blocked by other taks needed to be finished before. The untagged ones we can tackle whenever we have time.
 
-A. \[OTHERS\] One of the experts in the team is generating images and containers for the TTS and STT servers. We should not care about this now, once these are developed we will need to include them in the docker compose.
+A. \[DONE\] Dockerfiles and docker-compose integration for the STT (WhisperLiveKit) and TTS (Chatterbox) servers have been created in `services/`.
 
-B. \[BLOCKED:A\] Once everything is tested with docker compose, prepare whatever is necesary to deploy this to EC2, ECS or EKS depending on the needs, probably also having comparibility with GCP equivalent services.
+B. Once everything is tested with docker compose, prepare whatever is necesary to deploy this to EC2, ECS or EKS depending on the needs, probably also having comparibility with GCP equivalent services.
 
 C. \[BLOCKED:B\] Once everything is tested, we should create the CDK and GCP equivalent files for deploying this automatically using CI/CD and likely some tests.
 
