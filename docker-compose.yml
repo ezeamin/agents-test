@@ -23,6 +23,7 @@ services:
   # Protocol: raw 16kHz PCM (--pcm-input required by our Pipecat plugin)
   # ──────────────────────────────────────────────────────────────────────────
   stt-whisper:
+    image: {STT_WHISPER_IMAGE:-}
     build:
       context: ./services/whisperlivekit
     container_name: strata_stt
@@ -54,6 +55,7 @@ services:
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
       - WHISPER_LANG=${WHISPER_LANG:-es}
     restart: unless-stopped
+    profiles: ["gpu-stt", "gpu-all"]
 
   # ──────────────────────────────────────────────────────────────────────────
   # Text-to-Speech Service (Chatterbox — multilingual fork)
@@ -61,6 +63,7 @@ services:
   # Also supports OpenAI-compatible: http://localhost:8004/v1/audio/speech
   # ──────────────────────────────────────────────────────────────────────────
   tts-chatterbox:
+    image: {TTS_CHATTERBOX_IMAGE:-}
     build:
       context: ./services/chatterbox
     container_name: strata_tts
@@ -90,6 +93,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    profiles: ["gpu-tts", "gpu-all"]
 
   # ──────────────────────────────────────────────────────────────────────────
   # Piper TTS (optional — uncomment to use local open-source TTS instead)
