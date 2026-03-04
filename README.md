@@ -55,7 +55,14 @@ pipelines/nova.py
 ├── Dockerfile                # Imagen Docker del agente Nova
 ├── docker-compose.yml        # nova-agent + stt-whisper + tts-chatterbox (network_mode: host para WebRTC)
 ├── requirements.txt
-└── .env.example
+├── .env.example
+├── cdk/                      # AWS CDK TypeScript: provisiona repositorios ECR
+│   ├── bin/app.ts
+│   ├── lib/ecr-stack.ts      # 3 repos ECR: strata/nova-agent, strata/stt-whisper, strata/tts-chatterbox
+│   └── ...
+└── .github/
+    └── workflows/
+        └── build-push-ecr.yml  # CI/CD: build + push a ECR en cada push a master
 ```
 
 ## Requisitos
@@ -101,10 +108,33 @@ uv run src/agent.py   # http://localhost:7860
 
 ### Docker (EC2)
 
-El stack completo (agente + STT + TTS) se levanta con un solo comando. El agente usa `network_mode: host` para que `aiortc` pueda enlazarse directamente a las interfaces del host, necesario para que STUN descubra la IP pública correcta en EC2. Con `EC2_HOST=localhost` en `.env` los tres servicios se comunican via `localhost`:
+El agente usa `network_mode: host` para que `aiortc` pueda enlazarse directamente a las interfaces del host, necesario para que STUN descubra la IP pública correcta en EC2. Con `EC2_HOST=localhost` en `.env` los tres servicios se comunican via `localhost`.
+
+Los servicios de STT y TTS son opcionales mediante **profiles**. Usarlos solo cuando se usan los proveedores GPU locales (WhisperLiveKit / Chatterbox); omitirlos cuando se usan APIs cloud (Deepgram, Polly, ElevenLabs):
 
 ```bash
+# Stack completo (agente + STT GPU + TTS GPU):
+docker compose --profile gpu-all up --build
+
+# Solo el agente (STT/TTS via APIs cloud):
 docker compose up --build
+
+# Servicios individuales:
+docker compose --profile gpu-stt up --build   # agente + stt-whisper
+docker compose --profile gpu-tts up --build   # agente + tts-chatterbox
+```
+
+Para usar imágenes pre-buildeadas desde ECR en lugar de buildear localmente, setear las variables en `.env`:
+
+```bash
+NOVA_AGENT_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/strata/nova-agent:latest
+STT_WHISPER_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/strata/stt-whisper:latest
+TTS_CHATTERBOX_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/strata/tts-chatterbox:latest
+```
+
+```bash
+docker compose --profile gpu-all pull   # descarga desde ECR
+docker compose --profile gpu-all up     # corre sin buildear
 ```
 
 ### Test de conexion STT
@@ -112,6 +142,27 @@ docker compose up --build
 ```bash
 python scripts/whisperlivekit_websocket.py
 ```
+
+## ECR y CI/CD
+
+Los repositorios ECR se provisionan con CDK (una sola vez por cuenta/región):
+
+```bash
+cd cdk
+npm install
+npx cdk bootstrap   # solo la primera vez
+npx cdk deploy      # crea strata/nova-agent, strata/stt-whisper, strata/tts-chatterbox en ECR
+```
+
+El workflow `.github/workflows/build-push-ecr.yml` buildea y pushea las tres imágenes a ECR automáticamente en cada push a `master`. También se puede disparar manualmente desde la pestaña Actions de GitHub.
+
+**Secrets requeridos en GitHub** (Settings → Secrets and variables → Actions):
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_DEFAULT_REGION`
+- `AWS_ACCOUNT_ID`
+
+Cada imagen se tagea con `latest` y con el SHA corto del commit (`sha-abc1234`) para poder hacer rollback a cualquier build anterior.
 
 ## ICE Servers — Nota de Produccion
 

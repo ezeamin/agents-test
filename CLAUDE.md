@@ -21,6 +21,17 @@ Key design decisions:
 ├── requirements.txt                    # Python dependencies (pipecat extras, boto3, etc.)
 ├── .env.example                        # Template for all required environment variables
 │
+├── cdk/                                # AWS CDK TypeScript project (infrastructure as code)
+│   ├── bin/app.ts                      # CDK app entry point — instantiates stacks
+│   ├── lib/ecr-stack.ts                # EcrStack: 3 ECR repos (nova-agent, stt-whisper, tts-chatterbox)
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── cdk.json
+│
+├── .github/
+│   └── workflows/
+│       └── build-push-ecr.yml         # CI/CD: builds all 3 images and pushes to ECR on push to master
+│
 ├── src/
 │   ├── agent.py                        # Entry point: FastAPI server, WebRTC routes, debug WS
 │   ├── frontend/
@@ -177,9 +188,23 @@ uv run src/agent.py   # serves on http://localhost:7860
 
 **Docker (EC2 — uses `network_mode: host` for nova-agent):**
 ```bash
-docker compose up --build        # starts nova-agent + stt-whisper + tts-chatterbox
-# Set EC2_HOST=localhost in .env — all three services run on the same host
+# Full stack (agent + local GPU STT + local GPU TTS):
+docker compose --profile gpu-all up --build
+
+# Agent only (when using cloud STT/TTS APIs like Deepgram / Polly / ElevenLabs):
+docker compose up --build
+
+# Individual GPU services:
+docker compose --profile gpu-stt up --build   # agent + stt-whisper only
+docker compose --profile gpu-tts up --build   # agent + tts-chatterbox only
+
+# Pull pre-built images from ECR instead of building locally:
+# Set NOVA_AGENT_IMAGE, STT_WHISPER_IMAGE, TTS_CHATTERBOX_IMAGE in .env to the ECR URIs,
+# then run without --build:
+docker compose --profile gpu-all pull
+docker compose --profile gpu-all up
 ```
+Set `EC2_HOST=localhost` in `.env` — all services communicate via the host loopback.
 
 **Test STT connection standalone:**
 ```bash
@@ -192,14 +217,18 @@ python scripts/whisperlivekit_websocket.py
 
 All three services (nova-agent, stt-whisper, tts-chatterbox) are containerized and managed together via docker-compose. The stack is deployed on an EC2 instance exposed publicly via HTTPS using Load Balancers and Target Groups.
 
-## Future Status
+Docker Compose profiles (`gpu-stt`, `gpu-tts`, `gpu-all`) allow selectively running the GPU services; when using cloud STT/TTS APIs the heavy containers can be skipped entirely.
 
-This are some of the task we will tackle to improve the current implementation. Those that are tagged with \[OTHERS\] will be implemented by other people in the team, and those tagged with \[BLOCKED\] are blocked by other taks needed to be finished before. The untagged ones we can tackle whenever we have time.
+ECR repositories for all three images are provisioned via CDK (`cdk/`). A GitHub Actions workflow (`.github/workflows/build-push-ecr.yml`) builds and pushes all images to ECR on every push to `master`.
 
-A. \[DONE\] Dockerfiles and docker-compose integration for the STT (WhisperLiveKit) and TTS (Chatterbox) servers have been created in `services/`.
+## Pending Tasks
 
-B. Once everything is tested with docker compose, prepare whatever is necesary to deploy this to EC2, ECS or EKS depending on the needs, probably also having comparibility with GCP equivalent services.
+Those tagged with \[OTHERS\] will be implemented by other people in the team. The untagged ones can be tackled whenever there is time.
 
-C. \[BLOCKED:B\] Once everything is tested, we should create the CDK and GCP equivalent files for deploying this automatically using CI/CD and likely some tests.
+A. \[DONE\] Dockerfiles and docker-compose integration for STT and TTS servers (`services/`).
 
-D. \[OTHERS\] Instead of using the web ui provided by pipecat, we will advance on creating our own applications or integrations with other communication services like telephony.
+B. \[DONE\] ECR repositories created via CDK (`cdk/lib/ecr-stack.ts`). GitHub Actions CI/CD pipeline pushes images on every merge to master.
+
+C. Deployment infra CDK stack: EC2 instance (or ECS with EC2 launch type for GPU support), Load Balancer, Target Groups, and HTTPS certificate attachment. See `TODO.md` for a full trade-off table of deployment options. GCP equivalents pending.
+
+D. \[OTHERS\] Replace the debug web UI with custom applications or integrations with other communication services (telephony, etc.).
