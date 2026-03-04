@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Frontend — host build artifacts; the image builds them fresh
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.env
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Dev caches
+.pytest_cache/
+.ruff_cache/
+cache/

@@ -1,5 +1,4 @@
 services:
-
   # ──────────────────────────────────────────────────────────────────────────
   # Nova Agent (Pipecat voice pipeline)
   # network_mode: host is required so that aiortc can bind directly to the
@@ -7,7 +6,16 @@ services:
   # With host networking the agent reaches the STT/TTS services via localhost.
   # ──────────────────────────────────────────────────────────────────────────
   nova-agent:
-    build: .
+    build:
+      context: .
+      args:
+        # Vite bakes these into the JS bundle at build time.
+        # Values are read from the .env file (or host environment).
+        VITE_COGNITO_DOMAIN: ${VITE_COGNITO_DOMAIN}
+        VITE_COGNITO_CLIENT_ID: ${VITE_COGNITO_CLIENT_ID}
+        VITE_COGNITO_REDIRECT_URI: ${VITE_COGNITO_REDIRECT_URI}
+        VITE_COGNITO_LOGOUT_URI: ${VITE_COGNITO_LOGOUT_URI}
+        VITE_ICE_SERVERS: ${VITE_ICE_SERVERS:-stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302}
     container_name: strata_nova_agent
     command: uv run src/agent.py --host 0.0.0.0
     network_mode: host
@@ -29,7 +37,7 @@ services:
     container_name: strata_stt
     env_file: .env
     ports:
-      - "8000:8000"
+      - '8000:8000'
     volumes:
       # Unified cache for all runtime downloads (HuggingFace models, torch, etc.)
       # /root/.cache inside the container is symlinked to /app/cache so every
@@ -69,7 +77,7 @@ services:
     container_name: strata_tts
     env_file: .env
     ports:
-      - "8004:8004"
+      - '8004:8004'
     volumes:
       # Unified cache shared with stt-whisper — both pull HuggingFace models.
       # Same bind-mount path so they share downloads on the same host partition.
