@@ -51,7 +51,13 @@ pipelines/nova.py
 │   ├── piper/
 │   │   ├── Dockerfile        # Imagen Docker para Piper TTS
 │   │   └── run_piper.py      # Launcher del servidor Piper
-│   └── whisperlivekit_websocket.py  # Script de test para WebSocket STT
+│   ├── whisperlivekit_websocket.py  # Script de test para WebSocket STT
+│   └── test-custom-integrations/
+│       ├── test_chatterbox_custom_integration.py   # Test de integración TTS: síntesis con parámetros
+│       │                                           # ajustables, reporte de TTFA, análisis de gaps,
+│       │                                           # guardado de WAV y reproducción opcional
+│       └── test_whisper_livekit_custom_integration.py  # Test de integración STT: captura de mic,
+│                                                       # imprime TranscriptionFrames; --raw para JSON crudo
 ├── Dockerfile                # Imagen Docker del agente Nova
 ├── docker-compose.yml        # nova-agent + stt-whisper + tts-chatterbox (network_mode: host para WebRTC)
 ├── requirements.txt
@@ -186,6 +192,20 @@ STT en streaming via WebSocket. Transcribe audio mientras el usuario habla sin e
 - Protocolo: WebSocket en `ws://{host}:{port}/asr`
 - Env: `STT_SERVICE_PROVIDER=WHISPER_STREAM`
 
+**Nota de protocolo:** WhisperLiveKit actualiza `lines[0]` in-place en cada
+mensaje (no agrega entradas nuevas). El plugin usa un tracker basado en contenido
+(`_last_lines_text`) para detectar cambios y emitir solo el delta como
+`TranscriptionFrame`. Sin este mecanismo, el agregador solo recibiría las
+primeras palabras del turno.
+
+**Test de integración:**
+```bash
+# Con el servidor corriendo (docker compose --profile gpu-stt up):
+python scripts/test-custom-integrations/test_whisper_livekit_custom_integration.py
+# Para ver los mensajes JSON crudos del servidor:
+python scripts/test-custom-integrations/test_whisper_livekit_custom_integration.py --raw
+```
+
 #### Despliegue del servidor WhisperLiveKit
 
 **Docker (recomendado):**
@@ -228,6 +248,26 @@ TTS via servidor Chatterbox con soporte para voces predefinidas y clonadas. Dete
 - Plugin custom: `src/helpers/chatterbox_custom_integration.py`
 - Endpoints soportados: `/tts` (default) y `/v1/audio/speech` (OpenAI-compatible)
 - Env: `TTS_SERVICE_PROVIDER=CHATTERBOX_SERVER` o `CHATTERBOX_SERVER_OPENAI`
+
+**Estrategia de envío por oraciones:** El servidor Chatterbox genera el audio
+completo antes de enviarlo (no hay streaming verdadero — hay un PR upstream
+pendiente que lo agrega: TODO: `<PR_URL>`). Para reducir la latencia percibida
+el plugin `ChatterboxServerTTSSentenceSplit` divide la respuesta del LLM en
+oraciones y lanza una request `/tts` por oración, reproduciendo cada una en
+cuanto llega. Esto evita también el ruido inter-chunk que producía el
+`split_text` del servidor. Cuando el PR upstream esté mergeado se puede
+reemplazar por la clase base `ChatterboxServerTTS`.
+
+**Test de integración:**
+```bash
+# Con el servidor corriendo (docker compose --profile gpu-tts up):
+python scripts/test-custom-integrations/test_chatterbox_custom_integration.py \
+  "Soy Nova tu asistente de Strata Sportiva. ¿En qué puedo ayudarte?"
+
+# Guardar audio para inspección:
+python scripts/test-custom-integrations/test_chatterbox_custom_integration.py \
+  --save output.wav "Hola, ¿cómo estás?"
+```
 
 #### Despliegue del servidor Chatterbox
 

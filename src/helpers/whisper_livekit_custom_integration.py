@@ -22,7 +22,7 @@ class WhisperLiveKitSTT(STTService):
         self.ws = None
         self.recv_task = None
         self.closed = False
-        self._lines_seen = 0
+        self._last_lines_text = ""
 
     # ---------- lifecycle ----------
 
@@ -81,25 +81,41 @@ class WhisperLiveKitSTT(STTService):
                         )
                     )
 
-                # Only emit NEW lines (lines array is cumulative)
+                # WhisperLiveKit updates existing line entries in-place as speech
+                # accumulates (lines[0] grows from "Hola" → "Hola, ¿qué tal?" over
+                # time). Tracking by count misses those in-place updates, so we
+                # track by content instead and emit only the new delta each time.
                 if lines:
-                    if len(lines) < self._lines_seen:
-                        # Server reset the lines (e.g. new utterance)
-                        self._lines_seen = 0
-                    if len(lines) > self._lines_seen:
-                        new_lines = lines[self._lines_seen:]
-                        self._lines_seen = len(lines)
-                        final = " ".join(
-                            l.get("text", "") for l in new_lines if l.get("text")
-                        ).strip()
-                        if final:
+                    current_text = " ".join(
+                        l.get("text", "") for l in lines if l.get("text")
+                    ).strip()
+
+                    if current_text and current_text != self._last_lines_text:
+                        if (
+                            self._last_lines_text
+                            and current_text.startswith(self._last_lines_text)
+                        ):
+                            # Pure append: emit only the new portion so the
+                            # aggregator can concatenate without duplicates.
+                            new_part = current_text[len(self._last_lines_text):].strip()
+                            if new_part:
+                                await self.push_frame(
+                                    TranscriptionFrame(
+                                        text=new_part,
+                                        user_id="",
+                                        timestamp=time_now_iso8601(),
+                                    )
+                                )
+                        else:
+                            # Correction or new utterance: emit the full text.
                             await self.push_frame(
                                 TranscriptionFrame(
-                                    text=final,
+                                    text=current_text,
                                     user_id="",
                                     timestamp=time_now_iso8601(),
                                 )
                             )
+                        self._last_lines_text = current_text
         except asyncio.CancelledError:
             pass
         except Exception as e:

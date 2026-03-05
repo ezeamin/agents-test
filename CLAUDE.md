@@ -57,6 +57,13 @@ Key design decisions:
 │
 ├── scripts/
 │   ├── whisperlivekit_websocket.py     # Standalone test script: streams mic audio to the WhisperLiveKit server
+│   ├── test-custom-integrations/
+│   │   ├── test_chatterbox_custom_integration.py   # TTS integration test: imports ChatterboxServerTTS directly,
+│   │   │                                           # runs synthesis with CLI-tunable params, reports TTFA,
+│   │   │                                           # inter-chunk gap analysis, saves WAV, optional playback
+│   │   └── test_whisper_livekit_custom_integration.py  # STT integration test: TestableSTT subclass bypasses
+│   │                                                   # Pipecat lifecycle, captures mic via sounddevice,
+│   │                                                   # prints TranscriptionFrames; --raw flag prints raw JSON
 │   ├── pipecat-examples-webrtc-docker/ # Reference example from Pipecat docs (custom server+client pattern)
 │   └── piper/
 │       ├── Dockerfile                  # Container image for the Piper TTS HTTP server
@@ -114,7 +121,7 @@ User (Browser)
 | | `WHISPER` | Runs Whisper locally on CPU (slow, no external server needed) |
 | | `DEEPGRAM` | Cloud API; requires `DEEPGRAM_API_KEY` |
 | **LLM** | AWS Bedrock | Always used; model `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| **TTS** | `CHATTERBOX_SERVER` (default) | Streams WAV chunks from a remote Chatterbox server's `/tts` endpoint |
+| **TTS** | `CHATTERBOX_SERVER` (default) | Sends one `/tts` request per sentence; plays each sentence as it arrives. See design note below. |
 | | `CHATTERBOX_SERVER_OPENAI` | Same server, OpenAI-compatible `/v1/audio/speech` endpoint |
 | | `PIPER` | Self-hosted Piper TTS (can be run via `scripts/piper/`); requires voice `.onnx` files in `voice/` |
 | | `POLLY` | AWS Polly generative voice (`Lupe`, `es-US`) |
@@ -210,6 +217,49 @@ Set `EC2_HOST=localhost` in `.env` — all services communicate via the host loo
 ```bash
 python scripts/whisperlivekit_websocket.py
 ```
+
+# Design Notes
+
+## WhisperLiveKit STT — in-place line update protocol
+
+WhisperLiveKit sends WebSocket messages where the `lines` array is **updated
+in-place, not by appending**. A single utterance looks like:
+
+```
+{"lines": [{"text": " Hola"}]}
+{"lines": [{"text": " Hola, ¿qué"}]}
+{"lines": [{"text": " Hola, ¿qué tal? ¿Cómo estás?"}]}
+```
+
+The `_recv_loop` in `whisper_livekit_custom_integration.py` therefore uses a
+**content-based tracker** (`_last_lines_text`) instead of a length counter.
+On every message it computes the full text from all non-empty lines; if the
+text grew (pure append), it emits the delta as a `TranscriptionFrame`; if it
+changed in a non-append way (correction or new utterance start), it emits the
+full new text. This ensures the downstream aggregator receives the complete
+sentence regardless of how many in-place updates the server made.
+
+## Chatterbox TTS — sentence-split strategy
+
+The Chatterbox server currently **batches the full generation before sending**;
+there is no true streaming (a PR adding token-by-token audio output is open
+upstream — TODO: add URL when merged). The server's `split_text` / `chunk_size`
+parameter only splits the text into shorter segments processed independently,
+which increases total inference time due to per-segment padding and can
+introduce inter-chunk noise from multiple WAV headers in the response stream.
+
+The production class `ChatterboxServerTTSSentenceSplit` (used when
+`TTS_SERVICE_PROVIDER=CHATTERBOX_SERVER`) splits the LLM response into
+sentences in the plugin before calling the server, firing one `/tts` request
+per sentence. The agent starts speaking the first sentence while the server
+generates the rest, reducing perceived latency. The server never sees
+`split_text=True`.
+
+When the upstream streaming PR lands, `ChatterboxServerTTSSentenceSplit` can
+be replaced with the base `ChatterboxServerTTS`, which will then yield audio
+as it is generated rather than buffering a full sentence first.
+
+---
 
 # State Of Things
 
