@@ -1,3 +1,14 @@
+import re
+
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+
+
+def _split_sentences(text: str) -> list:
+    """Split text into sentences on [.!?] followed by whitespace."""
+    parts = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    return parts or [text]
+
+
 """
 IMPORTANT:
 
@@ -135,6 +146,39 @@ class ChatterboxServerTTS(TTSService):
         except Exception as e:
             logger.error(f"Chatterbox /tts error: {e}")
             yield ErrorFrame(error=f"Chatterbox /tts error: {e}")
+
+
+class ChatterboxServerTTSSentenceSplit(ChatterboxServerTTS):
+    """Like ChatterboxServerTTS but splits the text into sentences and calls the
+    server once per sentence, yielding audio as each sentence is ready.
+
+    This lets the agent start speaking the first sentence while the server is
+    still generating the rest, reducing perceived latency without relying on
+    server-side split_text (which causes inter-chunk noise and is slower for
+    short texts).
+
+    The Chatterbox server currently batches the entire generation before
+    sending; true token-by-token streaming is tracked in an upstream PR —
+    when that lands, this class can be removed.
+    # TODO: upstream streaming PR — <PR_URL>
+    """
+
+    async def run_tts(self, text: str, context_id: str):
+        sentences = _split_sentences(text)
+
+        yield TTSStartedFrame(context_id=context_id)
+        for sentence in sentences:
+            # Delegate to the parent's payload-building + streaming logic but
+            # suppress the TTSStartedFrame / TTSStoppedFrame it emits so that
+            # the pipeline sees exactly one started/stopped pair per LLM turn.
+            async for frame in super().run_tts(sentence, context_id):
+                if isinstance(frame, (TTSStartedFrame, TTSStoppedFrame)):
+                    continue
+                if isinstance(frame, ErrorFrame):
+                    yield frame
+                    return
+                yield frame
+        yield TTSStoppedFrame(context_id=context_id)
 
 
 class ChatterboxServerTTSOpenAI(TTSService):
