@@ -160,14 +160,16 @@ class ChatterboxServerTTSSentenceSplit(ChatterboxServerTTS):
     The Chatterbox server currently batches the entire generation before
     sending; true token-by-token streaming is tracked in an upstream PR —
     when that lands, this class can be removed.
-    # TODO: upstream streaming PR — <PR_URL>
+    # TODO: upstream streaming PR — https://github.com/devnen/Chatterbox-TTS-Server/pull/124
     """
 
     async def run_tts(self, text: str, context_id: str):
+        logger.debug(f"Running TTS on text: {text}")
         sentences = _split_sentences(text)
 
         yield TTSStartedFrame(context_id=context_id)
         for sentence in sentences:
+            logger.debug(f"Running TTS on sentence: {sentence}")
             # Delegate to the parent's payload-building + streaming logic but
             # suppress the TTSStartedFrame / TTSStoppedFrame it emits so that
             # the pipeline sees exactly one started/stopped pair per LLM turn.
