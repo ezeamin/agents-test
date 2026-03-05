@@ -37,7 +37,7 @@ import sounddevice as sd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from helpers.chatterbox_custom_integration import ChatterboxServerTTS
+from helpers.chatterbox_custom_integration import ChatterboxServerTTS, ChatterboxServerTTSSentenceSplit
 from pipecat.frames.frames import AudioRawFrame, ErrorFrame, TTSStartedFrame, TTSStoppedFrame
 
 # ── default parameters (edit here or override via CLI args) ───────────────────
