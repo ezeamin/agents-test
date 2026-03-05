@@ -40,6 +40,7 @@ export function DebugPage() {
             onClick={logout}
             aria-label='Cerrar sesión'
             title='Cerrar sesión'
+            className='cursor-pointer'
           >
             <LogOut className='size-4' />
           </Button>
