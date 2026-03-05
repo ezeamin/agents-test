@@ -1,20 +1,3 @@
-# Patched config for the 4-alok/Chatterbox-TTS-Server multilingual fork.
-#
-# This file replaces the fork's default config.yaml at build time (see COPY
-# step in services/chatterbox/Dockerfile). It exists here rather than in a
-# separate repo fork so the changes are visible alongside the Dockerfile and
-# easier to maintain.
-#
-# Changes from the upstream 4-alok defaults:
-#   - TODO: fill in your changes from the local fork review here
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FILL IN THE ACTUAL CONFIG BELOW
-# Copy the upstream config.yaml from the 4-alok fork as a base and apply
-# the changes you had locally. Key paths to update for Linux / Docker:
-#   - Any path pointing to ~/Library, /Users/, or macOS-specific locations
-#     should be replaced with /app/hf_cache, /app/voices, /app/outputs
-# ─────────────────────────────────────────────────────────────────────────────
 server:
   host: 0.0.0.0
   port: 8004
@@ -31,7 +14,7 @@ tts_engine:
   device: cuda
   predefined_voices_path: voices
   reference_audio_path: reference_audio
-  default_voice_id: default_sample.wav
+  default_voice_id: Emily.wav
 paths:
   model_cache: /app/cache/chatterbox
   output: outputs
@@ -46,6 +29,7 @@ audio_output:
   format: wav
   sample_rate: 24000
   max_reference_duration_sec: 3600
+  save_to_disk: false
 ui_state:
   last_text: "\xA1Hola! Soy tu asistente de voz argentino y estoy ac\xE1 para ayudarte\
     \ con tus compras. Tenemos ofertas incre\xEDbles, especialmente nuestro famoso\

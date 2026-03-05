@@ -90,7 +90,7 @@ cp .env.example .env
 | Variable | Default | Descripcion |
 |---|---|---|
 | `STT_SERVICE_PROVIDER` | `WHISPER_STREAM` | `WHISPER_STREAM` \| `WHISPER` \| `DEEPGRAM` |
-| `TTS_SERVICE_PROVIDER` | `CHATTERBOX_SERVER` | `CHATTERBOX_SERVER` \| `CHATTERBOX_SERVER_OPENAI` \| `PIPER` \| `POLLY` \| `ELEVENLABS` |
+| `TTS_SERVICE_PROVIDER` | `CHATTERBOX_SERVER` | `CHATTERBOX_SERVER` \| `CHATTERBOX_SERVER_PIPELINED` \| `CHATTERBOX_SERVER_OPENAI` \| `PIPER` \| `POLLY` \| `ELEVENLABS` |
 | `ICE_SERVERS` | Google STUN | URLs ICE separadas por comas. Ver nota de producción abajo. |
 | `EC2_HOST` | — | Host por defecto para todos los servidores remotos |
 | `EC2_HOST_WHISPER_STREAM` | `EC2_HOST` | Override para el servidor WhisperLiveKit |
@@ -249,14 +249,24 @@ TTS via servidor Chatterbox con soporte para voces predefinidas y clonadas. Dete
 - Endpoints soportados: `/tts` (default) y `/v1/audio/speech` (OpenAI-compatible)
 - Env: `TTS_SERVICE_PROVIDER=CHATTERBOX_SERVER` o `CHATTERBOX_SERVER_OPENAI`
 
-**Estrategia de envío por oraciones:** El servidor Chatterbox genera el audio
-completo antes de enviarlo (no hay streaming verdadero — hay un PR upstream
-pendiente que lo agrega: TODO: `<PR_URL>`). Para reducir la latencia percibida
-el plugin `ChatterboxServerTTSSentenceSplit` divide la respuesta del LLM en
-oraciones y lanza una request `/tts` por oración, reproduciendo cada una en
-cuanto llega. Esto evita también el ruido inter-chunk que producía el
-`split_text` del servidor. Cuando el PR upstream esté mergeado se puede
-reemplazar por la clase base `ChatterboxServerTTS`.
+**Estrategia de pipelining:** El servidor Chatterbox genera el audio completo
+antes de enviarlo (no hay streaming verdadero — hay un PR upstream pendiente).
+`ChatterboxServerTTSPipelined` (`CHATTERBOX_SERVER_PIPELINED`) lanza una
+request `/tts` por oración inmediatamente sin esperar a que la anterior
+termine de generarse. Las respuestas se encolan en orden y se reproducen
+secuencialmente, eliminando el gap entre oraciones que produce la clase base.
+
+> **Nota:** El plugin asume un header WAV estándar de 44 bytes para extraer el
+> PCM crudo de la respuesta. Si en algún momento el servidor envía headers de
+> longitud variable, habría que parsearlos en lugar de hacer un skip fijo.
+
+`ChatterboxServerTTS` (`CHATTERBOX_SERVER`, default) es el fallback estable
+sin pipelining — una request a la vez, sin asumir nada del header.
+
+> **Deprecated:** `ChatterboxServerTTSSentenceSplit` — el enfoque anterior
+> de dividir oraciones en el cliente resultó en mayor latencia total por el
+> overhead de múltiples requests secuenciales. Reemplazado por
+> `ChatterboxServerTTSPipelined`.
 
 **Test de integración:**
 ```bash

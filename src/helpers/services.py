@@ -11,7 +11,11 @@ from pipecat.services.piper.tts import PiperTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 
 from helpers.whisper_livekit_custom_integration import WhisperLiveKitSTT
-from helpers.chatterbox_custom_integration import ChatterboxServerTTS, ChatterboxServerTTSOpenAI
+from helpers.chatterbox_custom_integration import (
+    ChatterboxServerTTS,
+    ChatterboxServerTTSOpenAI,
+    ChatterboxServerTTSPipelined,
+)
 
 
 def create_stt_service():
@@ -50,11 +54,12 @@ def create_stt_service():
 def create_tts_service(session: aiohttp.ClientSession):
     """Crea y configura el servicio de Text-to-Speech"""
     tts_service_provider = os.getenv("TTS_SERVICE_PROVIDER", "CHATTERBOX_SERVER")
-    if tts_service_provider == "CHATTERBOX_SERVER":
+    if tts_service_provider in ("CHATTERBOX_SERVER", "CHATTERBOX_SERVER_PIPELINED"):
         ec2_host = os.getenv('EC2_HOST_CHATTERBOX', os.getenv('EC2_HOST'))
         if not ec2_host:
             raise ValueError("Must set EC2_HOST or EC2_HOST_CHATTERBOX")
-        return ChatterboxServerTTS(
+        cls = ChatterboxServerTTSPipelined if tts_service_provider == "CHATTERBOX_SERVER_PIPELINED" else ChatterboxServerTTS
+        return cls(
             aiohttp_session=session,
             base_url=f"http://{ec2_host}:{os.getenv('EC2_CHATTERBOX_PORT', 8004)}",
             voice="Elena.wav",
