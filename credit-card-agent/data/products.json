@@ -1,0 +1,18 @@
+{
+  "Colombia": {
+    "currency": "COP",
+    "card_name": "Mastercard Premium",
+    "annual_fee": 38000,
+    "benefits": "Millas para vuelos desde la primera compra",
+    "free_period": "6 meses",
+    "payment_days": 45
+  },
+  "Mexico": {
+    "currency": "MXN",
+    "card_name": "Mastercard Premium",
+    "annual_fee": 699,
+    "benefits": "Meses sin intereses + 3% cashback en restaurantes",
+    "free_period": "6 meses",
+    "payment_days": 50
+  }
+}

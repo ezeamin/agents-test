@@ -1,0 +1,22 @@
+{
+  "COL_001": {
+    "name": "Carlos Ramírez",
+    "country": "Colombia",
+    "cedula": "1045678901",
+    "phone": "+57 300 123 4588",
+    "address": "Calle 72 #10-34, Bogotá",
+    "credit_limit": 8000000,
+    "product_viewed": "Cámara Sony Alpha",
+    "product_price": 1200000
+  },
+  "MEX_001": {
+    "name": "Andrés Torres",
+    "country": "Mexico",
+    "curp": "TORA910315HDFRRN01",
+    "phone": "+52 55 1234 5647",
+    "address": "Avenida Insurgentes Sur 1234, CDMX",
+    "credit_limit": 35000,
+    "product_viewed": "Audífonos Sony WH-1000XM5",
+    "product_price": 3200
+  }
+}
