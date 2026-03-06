@@ -59,7 +59,10 @@ def main():
             user_input = input("👤 Tú: ").strip()
             
             if user_input.lower() in ['salir', 'exit']:
-                print("\n👋 Conversación terminada\n")
+                # Guardar trace antes de salir
+                trace_file = agent.save_trace()
+                print(f"\n💾 Conversación guardada en: {trace_file}")
+                print("👋 Conversación terminada\n")
                 break
             
             if not user_input:

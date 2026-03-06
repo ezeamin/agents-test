@@ -1,7 +1,8 @@
 .env
 __pycache__/
-.venv/
-voice/
+*.pyc
+*.pyo
 .DS_Store
-
+.vscode/
 *.log
+traces/

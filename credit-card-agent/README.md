@@ -59,6 +59,18 @@ credit-card-agent/
 2. `check_credit_limit` - Límite pre-aprobado
 3. `issue_card` - Emitir tarjeta virtual
 
+## 📊 Sistema de Traces
+
+Cada conversación se guarda automáticamente en `traces/` al escribir `salir`.
+
+Los traces incluyen:
+- Mensajes del usuario y agente
+- Timestamps
+- Logs de tools ejecutados
+- Útil para debugging y analytics
+
+Ver `TRACES.md` para más detalles.
+
 ## ⚠️ Requisitos AWS
 
 - Bedrock habilitado en tu cuenta
